@@ -310,10 +310,17 @@ fn decode_symphonia(path: &Path) -> Result<DecodedAudio> {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
+    // enable_gapless makes the demuxer read the MP3 LAME/Xing tag (and the
+    // equivalent for other formats) and mark each packet's encoder delay /
+    // padding as trim_start / trim_end, which the decode loop below applies.
+    let fmt_opts = FormatOptions {
+        enable_gapless: true,
+        ..Default::default()
+    };
     let probed = symphonia::default::get_probe().format(
         &hint,
         mss,
-        &FormatOptions::default(),
+        &fmt_opts,
         &MetadataOptions::default(),
     )?;
     let mut format = probed.format;
@@ -336,9 +343,13 @@ fn decode_symphonia(path: &Path) -> Result<DecodedAudio> {
         if packet.track_id() != track_id {
             continue;
         }
+        // Gapless trim: frames of encoder delay (front) / padding (back) to drop
+        // from this packet. Nonzero only on the first/last packets; 0 otherwise.
+        let trim_start = packet.trim_start as usize;
+        let trim_end = packet.trim_end as usize;
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                let ch = decoded.spec().channels.count();
+                let ch = decoded.spec().channels.count().max(1);
                 if sbuf.is_none() {
                     let spec = *decoded.spec();
                     sbuf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
@@ -346,22 +357,16 @@ fn decode_symphonia(path: &Path) -> Result<DecodedAudio> {
                 let sb = sbuf.as_mut().unwrap();
                 sb.copy_interleaved_ref(decoded);
                 let samples = sb.samples();
-                match ch {
-                    1 => {
-                        for &m in samples {
-                            out.push(m);
-                            out.push(m);
-                        }
-                    }
-                    2 => out.extend_from_slice(samples),
-                    n => {
-                        for frame in samples.chunks(n) {
-                            let l = frame[0];
-                            let r = frame.get(1).copied().unwrap_or(l);
-                            out.push(l);
-                            out.push(r);
-                        }
-                    }
+                let frames = samples.len() / ch;
+                // Fold to interleaved stereo over the kept frame range only.
+                let start = trim_start.min(frames);
+                let end = frames.saturating_sub(trim_end).max(start);
+                for f in start..end {
+                    let base = f * ch;
+                    let l = samples[base];
+                    let r = if ch >= 2 { samples[base + 1] } else { l };
+                    out.push(l);
+                    out.push(r);
                 }
             }
             Err(SymErr::DecodeError(_)) => continue,
