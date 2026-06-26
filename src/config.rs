@@ -5,41 +5,7 @@ use std::path::PathBuf;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-/// Per-theme animation applied while rendering (mostly to panel borders, plus
-/// the snow overlay). `None` is fully static.
-#[derive(Clone, Copy, PartialEq)]
-pub enum Anim {
-    None,
-    /// Borders shift through the full rainbow.
-    Prismatic,
-    /// Borders drift slowly through the trans-flag palette.
-    TransSlow,
-    /// Borders pulse/glow, the pulse rippling across panels.
-    Ripple,
-    /// Snowflakes fall over the whole window.
-    Snow,
-    /// Vivid CMY oscillation across borders.
-    Cmyk,
-    /// Hacker-green flames: particles on navigation, a burning playhead, and a
-    /// Calcifer fireball in the top-right corner.
-    Flame,
-    /// A waving stars-and-stripes flag in the top-right corner.
-    Flag,
-    /// Retro CRT glitch: artifact bands, scatter noise, RGB-split borders.
-    Glitch,
-    /// Electric: lightning bolts, crackling borders, spark particles.
-    Electric,
-    /// Matrix digital rain; scroll spawns extra cascades.
-    Matrix,
-    /// Rising bubbles; clicking pops a cluster upward.
-    Bubbles,
-    /// Warp starfield from screen center; navigation triggers a warp burst.
-    Starfield,
-    /// Drifting cherry-blossom petals; the mouse blows them like wind.
-    Sakura,
-    /// RAVE: confetti, strobe, fireworks on the beat, mega-explosions on click.
-    Rave,
-}
+use crate::effects::ThemeEffect;
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -53,7 +19,9 @@ pub struct Theme {
     pub wave: Color,
     pub playing: Color,
     pub bg_sel: Color,
-    pub anim: Anim,
+    /// The theme's animated behavior (border color, overlay, particle reactions).
+    /// Static themes point at `effects::NONE`.
+    pub effect: &'static dyn ThemeEffect,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -74,7 +42,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x6a, 0x84, 0xc4),
         playing: rgb(0xff, 0xb8, 0x6c),
         bg_sel: rgb(0x2a, 0x2e, 0x42),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "pride",
@@ -87,7 +55,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5d, 0x8c, 0xff),
         playing: rgb(0xff, 0x8c, 0x00),
         bg_sel: rgb(0x24, 0x1b, 0x2f),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "trans",
@@ -100,7 +68,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5b, 0xce, 0xfa),
         playing: rgb(0xf5, 0xa9, 0xb8),
         bg_sel: rgb(0x1b, 0x26, 0x30),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "bi",
@@ -113,7 +81,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5d, 0x6c, 0xff),
         playing: rgb(0xff, 0x4f, 0x9b),
         bg_sel: rgb(0x1e, 0x1a, 0x2e),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "lesbian",
@@ -126,7 +94,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0xff, 0x9e, 0xc4),
         playing: rgb(0xff, 0x5e, 0x8a),
         bg_sel: rgb(0x2a, 0x1c, 0x1c),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "pan",
@@ -139,7 +107,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x21, 0xb1, 0xff),
         playing: rgb(0xff, 0x21, 0x8c),
         bg_sel: rgb(0x22, 0x18, 0x26),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "nonbinary",
@@ -152,7 +120,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x9c, 0x59, 0xd1),
         playing: rgb(0xd6, 0xa8, 0xff),
         bg_sel: rgb(0x23, 0x20, 0x26),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "ace",
@@ -165,7 +133,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x8a, 0x8a, 0x8a),
         playing: rgb(0xd0, 0xa0, 0xff),
         bg_sel: rgb(0x1c, 0x1c, 0x20),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "prismatic",
@@ -178,7 +146,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x6a, 0x84, 0xc4),
         playing: rgb(0xff, 0xb8, 0x6c),
         bg_sel: rgb(0x24, 0x28, 0x3b),
-        anim: Anim::Prismatic,
+        effect: &crate::effects::PRISMATIC,
     },
     Theme {
         name: "trans flow",
@@ -191,7 +159,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5b, 0xce, 0xfa),
         playing: rgb(0xf5, 0xa9, 0xb8),
         bg_sel: rgb(0x1b, 0x26, 0x30),
-        anim: Anim::TransSlow,
+        effect: &crate::effects::TRANS_SLOW,
     },
     Theme {
         name: "ripple",
@@ -204,7 +172,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x4d, 0xc8, 0xff),
         playing: rgb(0x8a, 0xf0, 0xe0),
         bg_sel: rgb(0x12, 0x22, 0x26),
-        anim: Anim::Ripple,
+        effect: &crate::effects::RIPPLE,
     },
     Theme {
         name: "snow",
@@ -217,7 +185,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x7d, 0x9c, 0xc4),
         playing: rgb(0xe8, 0xf2, 0xff),
         bg_sel: rgb(0x16, 0x1d, 0x2c),
-        anim: Anim::Snow,
+        effect: &crate::effects::SNOW,
     },
     Theme {
         name: "cmyk",
@@ -230,7 +198,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x00, 0xe5, 0xe5),
         playing: rgb(0xe5, 0x00, 0xe5),
         bg_sel: rgb(0x18, 0x18, 0x1c),
-        anim: Anim::Cmyk,
+        effect: &crate::effects::CMYK,
     },
     Theme {
         name: "straight",
@@ -243,7 +211,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x3b, 0x5b, 0xdb),
         playing: rgb(0xff, 0xff, 0xff),
         bg_sel: rgb(0x16, 0x1c, 0x38),
-        anim: Anim::Flag,
+        effect: &crate::effects::FLAG,
     },
     Theme {
         name: "hacker",
@@ -256,7 +224,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x1f, 0x9d, 0x3a),
         playing: rgb(0xaa, 0xff, 0x66),
         bg_sel: rgb(0x06, 0x20, 0x0c),
-        anim: Anim::None,
+        effect: &crate::effects::NONE,
     },
     Theme {
         name: "not gay",
@@ -269,7 +237,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x1f, 0x9d, 0x3a),
         playing: rgb(0xaa, 0xff, 0x33),
         bg_sel: rgb(0x06, 0x20, 0x0c),
-        anim: Anim::Flame,
+        effect: &crate::effects::FLAME,
     },
     Theme {
         name: "glitch",
@@ -282,7 +250,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x1f, 0x9d, 0x3a),
         playing: rgb(0x66, 0xff, 0xaa),
         bg_sel: rgb(0x05, 0x1a, 0x10),
-        anim: Anim::Glitch,
+        effect: &crate::effects::GLITCH,
     },
     Theme {
         name: "electric",
@@ -295,7 +263,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5a, 0x9a, 0xff),
         playing: rgb(0xbf, 0xe9, 0xff),
         bg_sel: rgb(0x0a, 0x10, 0x24),
-        anim: Anim::Electric,
+        effect: &crate::effects::ELECTRIC,
     },
     Theme {
         name: "matrix",
@@ -308,7 +276,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x12, 0x9a, 0x3a),
         playing: rgb(0xb6, 0xff, 0x6a),
         bg_sel: rgb(0x03, 0x16, 0x09),
-        anim: Anim::Matrix,
+        effect: &crate::effects::MATRIX,
     },
     Theme {
         name: "aqua",
@@ -321,7 +289,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x2f, 0x9a, 0xc8),
         playing: rgb(0x9a, 0xf0, 0xff),
         bg_sel: rgb(0x06, 0x18, 0x24),
-        anim: Anim::Bubbles,
+        effect: &crate::effects::BUBBLES,
     },
     Theme {
         name: "cosmic",
@@ -334,7 +302,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x6a, 0x6a, 0xc8),
         playing: rgb(0xff, 0xd0, 0xf0),
         bg_sel: rgb(0x0c, 0x0a, 0x1e),
-        anim: Anim::Starfield,
+        effect: &crate::effects::STARFIELD,
     },
     Theme {
         name: "sakura",
@@ -347,7 +315,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0xd8, 0x7d, 0xb0),
         playing: rgb(0xff, 0xc4, 0xe0),
         bg_sel: rgb(0x22, 0x12, 0x1c),
-        anim: Anim::Sakura,
+        effect: &crate::effects::SAKURA,
     },
     Theme {
         name: "rave",
@@ -360,7 +328,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0xff, 0x2d, 0xd4),
         playing: rgb(0xff, 0xe0, 0x2d),
         bg_sel: rgb(0x14, 0x06, 0x1e),
-        anim: Anim::Rave,
+        effect: &crate::effects::RAVE,
     },
 ];
 

@@ -15,11 +15,13 @@ use souvlaki::{
 
 use crate::audio::{AudioEngine, TransportCmd};
 use crate::config::{
-    Anim, SCOPE_PRESETS, ScopePreset, Settings, THEMES, Theme, load_settings, save_settings,
+    SCOPE_PRESETS, ScopePreset, Settings, THEMES, Theme, load_settings, save_settings,
 };
+use crate::effects::FrameCtx;
 use crate::event::AppEvent;
 use crate::media::{Meta, Registry};
 use crate::model::{NodeId, TreeModel};
+use crate::particles::ParticleSim;
 
 /// Number of static-waveform bins computed per track (resolution-independent).
 const WAVE_BINS: usize = 1600;
@@ -33,18 +35,6 @@ pub enum LoopMode {
     All,
     /// Repeat the current track.
     One,
-}
-
-/// One particle (flame ember / electric spark): float position + velocity,
-/// integrated each tick until it ages out or leaves the screen.
-pub struct Spark {
-    pub x: f32,
-    pub y: f32,
-    pub vx: f32,
-    pub vy: f32,
-    pub age: u16,
-    pub life: u16,
-    pub seed: u32,
 }
 
 impl LoopMode {
@@ -99,6 +89,9 @@ pub struct App {
     pub transport_rect: Rect,
     pub tree_rect: Rect,
     pub scope_rect: Rect,
+    /// Now-playing panel rect (inspector's top row), recorded each render for
+    /// the flag overlay.
+    pub np_rect: Rect,
     pub screen: Rect,
     /// While a left-drag started on a seek bar, the rect being scrubbed.
     seeking_rect: Option<Rect>,
@@ -106,8 +99,8 @@ pub struct App {
     pub tree_hscroll: u16,
     /// Last mouse position, for hover highlighting of interactable parts.
     pub hover: Option<(u16, u16)>,
-    /// Live particles (Flame embers / Electric sparks).
-    pub particles: Vec<Spark>,
+    /// Live particle simulation, driven by the active theme's effect.
+    pub sim: ParticleSim,
     pub show_help: bool,
     /// Theme-picker modal: open flag, highlighted row, and the theme to restore
     /// on cancel.
@@ -170,11 +163,12 @@ impl App {
             transport_rect: Rect::default(),
             tree_rect: Rect::default(),
             scope_rect: Rect::default(),
+            np_rect: Rect::default(),
             screen: Rect::default(),
             seeking_rect: None,
             tree_hscroll: 0,
             hover: None,
-            particles: Vec::new(),
+            sim: ParticleSim::new(),
             show_help: false,
             show_theme: false,
             theme_sel: theme_idx,
@@ -301,9 +295,11 @@ impl App {
                 self.scope_buf.copy_from_slice(self.engine.scope());
                 self.check_track_end();
                 self.sync_media_playback();
-                self.spawn_scope_particles();
-                self.spawn_theme_ambient();
-                self.update_particles();
+                let ctx = self.frame_ctx();
+                let fx = self.theme.effect;
+                fx.ambient(&mut self.sim, &ctx);
+                let wind = fx.wind(&ctx);
+                self.sim.update(ctx.screen, wind);
                 self.frame = self.frame.wrapping_add(1);
             }
             AppEvent::Wave(path, _token, bins) => {
@@ -466,298 +462,37 @@ impl App {
             Some(p) if i < p => 1.0,  // moved up   -> down
             _ => -1.0,
         };
-        self.on_nav(dir);
+        let ctx = self.frame_ctx();
+        self.theme.effect.on_nav(&mut self.sim, &ctx, dir);
     }
 
-    /// Per-theme reaction to cursor navigation.
-    fn on_nav(&mut self, dir: f32) {
-        match self.theme.anim {
-            Anim::Flame | Anim::Electric => self.spawn_nav_particles(dir),
-            Anim::Starfield => self.spawn_warp(36),
-            _ => {}
+    /// Snapshot the per-frame geometry + playback state the active theme effect
+    /// reads when spawning/rendering particles.
+    pub(crate) fn frame_ctx(&self) -> FrameCtx {
+        let scope_peak = self.scope_buf.iter().fold(0f32, |m, &s| m.max(s.abs()));
+        let cursor_row = self
+            .list_state
+            .selected()
+            .map(|s| s.saturating_sub(self.list_state.offset()) as u16);
+        let (dur, pos, playing) = (
+            self.engine.duration_secs(),
+            self.engine.position_secs(),
+            self.engine.is_playing(),
+        );
+        let play_frac = (dur > 0.0 && self.now_playing.is_some() && playing)
+            .then(|| (pos / dur).clamp(0.0, 1.0));
+        FrameCtx {
+            frame: self.frame,
+            screen: self.screen,
+            tree_rect: self.tree_rect,
+            scope_rect: self.scope_rect,
+            wave_rect: self.wave_rect,
+            np_rect: self.np_rect,
+            hover: self.hover,
+            scope_peak,
+            cursor_row,
+            play_frac,
         }
-    }
-
-    /// Whether this theme uses the flame/spark nav+scope particle behavior.
-    fn particle_theme(&self) -> bool {
-        matches!(self.theme.anim, Anim::Flame | Anim::Electric)
-    }
-
-    fn cap_particles(&mut self) {
-        if self.particles.len() > 700 {
-            let drop = self.particles.len() - 700;
-            self.particles.drain(0..drop);
-        }
-    }
-
-    /// Generic radial burst at a point.
-    fn burst(&mut self, cx: u16, cy: u16, count: u32, spd: f32, life: u16) {
-        for i in 0..count {
-            let seed = crate::util::noise(self.frame as u32 + i, (cx as u32) * 131 + cy as u32);
-            let ang = (i as f32 / count.max(1) as f32) * std::f32::consts::TAU
-                + (seed % 100) as f32 * 0.02;
-            let s = spd * (0.4 + (seed % 6) as f32 * 0.13);
-            self.particles.push(Spark {
-                x: cx as f32,
-                y: cy as f32,
-                vx: ang.cos() * s,
-                vy: ang.sin() * s,
-                age: 0,
-                life,
-                seed,
-            });
-        }
-        self.cap_particles();
-    }
-
-    /// Warp burst of stars from the screen center.
-    fn spawn_warp(&mut self, count: u32) {
-        let s = self.screen;
-        let (cx, cy) = ((s.x + s.width / 2) as f32, (s.y + s.height / 2) as f32);
-        for i in 0..count {
-            let seed = crate::util::noise(self.frame as u32 + i, 0x5747);
-            let ang = (seed % 360) as f32 * 0.0174;
-            let spd = 0.5 + (seed % 8) as f32 * 0.12;
-            self.particles.push(Spark {
-                x: cx,
-                y: cy,
-                vx: ang.cos() * spd,
-                vy: ang.sin() * spd,
-                age: 0,
-                life: 70,
-                seed,
-            });
-        }
-        self.cap_particles();
-    }
-
-    /// Per-theme click interaction.
-    fn spawn_click(&mut self, col: u16, row: u16) {
-        match self.theme.anim {
-            Anim::Flame | Anim::Electric => self.burst(col, row, 22, 0.7, 12),
-            Anim::Flag => self.burst(col, row, 26, 0.7, 14),
-            Anim::Starfield => self.burst(col, row, 50, 1.3, 18), // supernova
-            Anim::Sakura => self.burst(col, row, 16, 0.4, 46),
-            Anim::Rave => {
-                self.burst(col, row, 80, 1.6, 22); // mega-explosion
-                self.burst(col, row, 40, 0.7, 30);
-            }
-            Anim::Bubbles => {
-                for i in 0..18u32 {
-                    let seed = crate::util::noise(self.frame as u32 + i, col as u32 * 131);
-                    self.particles.push(Spark {
-                        x: col as f32 + ((seed % 5) as f32 - 2.0),
-                        y: row as f32,
-                        vx: ((seed % 7) as f32 - 3.0) * 0.12,
-                        vy: -(0.3 + (seed % 4) as f32 * 0.12),
-                        age: 0,
-                        life: 60,
-                        seed,
-                    });
-                }
-                self.cap_particles();
-            }
-            Anim::Matrix => {
-                for i in 0..14u32 {
-                    let seed = crate::util::noise(self.frame as u32 + i, col as u32 * 17);
-                    self.particles.push(Spark {
-                        x: col as f32 + ((seed % 5) as f32 - 2.0),
-                        y: row as f32,
-                        vx: 0.0,
-                        vy: 0.45 + (seed % 3) as f32 * 0.15,
-                        age: 0,
-                        life: 90,
-                        seed,
-                    });
-                }
-                self.cap_particles();
-            }
-            _ => {}
-        }
-    }
-
-    /// Continuous per-theme ambient particles, spawned each tick.
-    fn spawn_theme_ambient(&mut self) {
-        let s = self.screen;
-        if s.width < 4 || s.height < 4 {
-            return;
-        }
-        let f = self.frame as u32;
-        let w = s.width as u32;
-        match self.theme.anim {
-            Anim::Matrix => {
-                for i in 0..3u32 {
-                    let seed = crate::util::noise(f + i, 0x4A7);
-                    self.particles.push(Spark {
-                        x: (s.x as u32 + seed % w) as f32,
-                        y: s.y as f32,
-                        vx: 0.0,
-                        vy: 0.5 + (seed % 3) as f32 * 0.18,
-                        age: 0,
-                        life: 150,
-                        seed,
-                    });
-                }
-            }
-            Anim::Bubbles => {
-                for i in 0..2u32 {
-                    let seed = crate::util::noise(f + i, 0xB0B);
-                    self.particles.push(Spark {
-                        x: (s.x as u32 + seed % w) as f32,
-                        y: (s.y + s.height - 1) as f32,
-                        vx: ((seed % 5) as f32 - 2.0) * 0.05,
-                        vy: -(0.25 + (seed % 4) as f32 * 0.1),
-                        age: 0,
-                        life: 150,
-                        seed,
-                    });
-                }
-            }
-            Anim::Starfield => self.spawn_warp(2),
-            Anim::Sakura => {
-                let seed = crate::util::noise(f, 0x5A6);
-                self.particles.push(Spark {
-                    x: (s.x as u32 + seed % w) as f32,
-                    y: s.y as f32,
-                    vx: ((seed % 7) as f32 - 3.0) * 0.05,
-                    vy: 0.18 + (seed % 3) as f32 * 0.05,
-                    age: 0,
-                    life: 200,
-                    seed,
-                });
-            }
-            Anim::Rave => {
-                for i in 0..4u32 {
-                    let seed = crate::util::noise(f + i, 0xACE);
-                    self.particles.push(Spark {
-                        x: (s.x as u32 + seed % w) as f32,
-                        y: (s.y as u32 + (seed / 7) % s.height as u32) as f32,
-                        vx: ((seed % 9) as f32 - 4.0) * 0.1,
-                        vy: ((seed / 9 % 9) as f32 - 4.0) * 0.1,
-                        age: 0,
-                        life: 28,
-                        seed,
-                    });
-                }
-                // Fireworks on loud beats.
-                let peak = self.scope_buf.iter().fold(0f32, |m, &x| m.max(x.abs()));
-                if peak > 0.3 && f % 3 == 0 {
-                    let seed = crate::util::noise(f, 0xF12E);
-                    let cx = s.x + (seed % w) as u16;
-                    let cy = s.y + (seed / 11 % (s.height as u32 / 2).max(1)) as u16;
-                    self.burst(cx, cy, 30, 1.0, 20);
-                }
-            }
-            _ => {}
-        }
-        self.cap_particles();
-    }
-
-    /// Matrix: a scroll spawns an extra cascade across the screen.
-    fn scroll_effect(&mut self) {
-        if self.theme.anim != Anim::Matrix {
-            return;
-        }
-        let s = self.screen;
-        let w = (s.width as u32).max(1);
-        for i in 0..12u32 {
-            let seed = crate::util::noise(self.frame as u32 + i, 0xC0DE);
-            self.particles.push(Spark {
-                x: (s.x as u32 + seed % w) as f32,
-                y: s.y as f32,
-                vx: 0.0,
-                vy: 0.6 + (seed % 3) as f32 * 0.2,
-                age: 0,
-                life: 150,
-                seed,
-            });
-        }
-        self.cap_particles();
-    }
-
-    /// Burst at the cursor row, travelling vertically in `dir` with x-jitter.
-    fn spawn_nav_particles(&mut self, dir: f32) {
-        if !self.particle_theme() {
-            return;
-        }
-        let r = self.tree_rect;
-        if r.width < 3 || r.height < 3 {
-            return;
-        }
-        let sel = self.list_state.selected().unwrap_or(0);
-        let vis = sel.saturating_sub(self.list_state.offset()) as u16;
-        let y = (r.y + 1 + vis).min(r.y + r.height - 2) as f32;
-        let base_x = (r.x + 1) as f32;
-        let span = r.width.saturating_sub(2).max(1) as u32;
-        for i in 0..18u32 {
-            let seed = crate::util::noise(self.frame as u32, i + sel as u32 * 7);
-            let vx = ((seed % 7) as f32 - 3.0) * 0.12;
-            let vy = dir * (0.4 + (seed % 3) as f32 * 0.18);
-            self.particles.push(Spark {
-                x: base_x + (seed % span) as f32,
-                y,
-                vx,
-                vy,
-                age: 0,
-                life: 9 + (seed % 8) as u16,
-                seed,
-            });
-        }
-        self.cap_particles();
-    }
-
-    /// Shoot particles off the oscilloscope when it peaks loud.
-    fn spawn_scope_particles(&mut self) {
-        if !self.particle_theme() || self.frame % 2 != 0 {
-            return;
-        }
-        let r = self.scope_rect;
-        if r.width < 3 || r.height < 3 {
-            return;
-        }
-        let peak = self.scope_buf.iter().fold(0f32, |m, &s| m.max(s.abs()));
-        if peak < 0.08 {
-            return;
-        }
-        let n = (((peak - 0.08) * 12.0) as u32 + 1).min(6);
-        let span = (r.width - 2) as u32;
-        // Launch from the middle of the scope (where the trace sits), not the top.
-        let mid = (r.y + r.height / 2) as f32;
-        for i in 0..n {
-            let seed = crate::util::noise(self.frame as u32 + i, peak.to_bits());
-            self.particles.push(Spark {
-                x: (r.x + 1) as f32 + (seed % span) as f32,
-                y: mid + ((seed / 7 % 3) as f32 - 1.0),
-                vx: ((seed % 9) as f32 - 4.0) * 0.18,
-                vy: -(0.4 + (seed % 4) as f32 * 0.18), // upward off the scope
-                age: 0,
-                life: 8 + (seed % 8) as u16,
-                seed,
-            });
-        }
-        self.cap_particles();
-    }
-
-    /// Integrate particles each tick; cull when aged or off-screen.
-    fn update_particles(&mut self) {
-        if self.particles.is_empty() {
-            return;
-        }
-        let s = self.screen;
-        let (w, h) = (s.width as f32, s.height as f32);
-        // Sakura: the mouse blows petals like a gust of wind.
-        let wind = (self.theme.anim == Anim::Sakura)
-            .then(|| self.hover.map(|(hx, _)| hx as f32))
-            .flatten();
-        self.particles.retain_mut(|p| {
-            if let Some(hx) = wind {
-                p.vx = (p.vx + (hx - p.x).signum() * 0.03).clamp(-0.6, 0.6);
-            }
-            p.x += p.vx;
-            p.y += p.vy;
-            p.age += 1;
-            p.x >= 0.0 && p.x < w && p.y >= 0.0 && p.y < h && p.age < p.life
-        });
     }
 
     fn expand(&mut self) {
@@ -876,17 +611,20 @@ impl App {
         match m.kind {
             MouseEventKind::ScrollDown => {
                 self.move_cursor(3);
-                self.scroll_effect();
+                let ctx = self.frame_ctx();
+                self.theme.effect.on_scroll(&mut self.sim, &ctx);
             }
             MouseEventKind::ScrollUp => {
                 self.move_cursor(-3);
-                self.scroll_effect();
+                let ctx = self.frame_ctx();
+                self.theme.effect.on_scroll(&mut self.sim, &ctx);
             }
             MouseEventKind::ScrollRight => self.tree_hscroll = (self.tree_hscroll + 2).min(80),
             MouseEventKind::ScrollLeft => self.tree_hscroll = self.tree_hscroll.saturating_sub(2),
             MouseEventKind::Down(MouseButton::Left) => {
                 // Every click triggers the theme's click interaction at the pointer.
-                self.spawn_click(col, row);
+                let ctx = self.frame_ctx();
+                self.theme.effect.on_click(&mut self.sim, &ctx, col, row);
                 // Seek bars take priority; start a scrub if pressed on one.
                 for rect in [self.wave_rect, self.transport_rect] {
                     if frac_in_rect(rect, col, row).is_some() {
