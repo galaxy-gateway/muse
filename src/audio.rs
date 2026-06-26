@@ -8,16 +8,18 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 
-/// Samples in the live-scope window (mono). 2048 ~ 46ms at 44.1k.
+/// Frames in the live-scope window. 2048 ~ 46ms at 44.1k. The published scope
+/// buffer is interleaved **stereo**, so it holds `SCOPE_LEN * 2` samples (L,R…)
+/// — mono presets fold to `0.5*(l+r)`, the XY preset uses the pair directly.
 pub const SCOPE_LEN: usize = 2048;
 
 /// Commands sent from the UI thread to the decode thread.
@@ -70,7 +72,8 @@ impl AudioEngine {
         let ring_cap = (device_sr as usize / 4) * 2;
         let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(ring_cap);
 
-        let (scope_in, scope_out) = triple_buffer::TripleBuffer::new(&vec![0f32; SCOPE_LEN]).split();
+        let (scope_in, scope_out) =
+            triple_buffer::TripleBuffer::new(&vec![0f32; SCOPE_LEN * 2]).split();
         let mut scope_in = scope_in;
 
         let pos_frames = Arc::new(AtomicU64::new(0));
@@ -80,9 +83,12 @@ impl AudioEngine {
 
         // --- cpal output callback (real-time thread) ------------------------
         let vol_cb = volume.clone();
-        let mut scope_ring = vec![0f32; SCOPE_LEN];
+        let scope_cap = SCOPE_LEN * 2; // interleaved stereo
+        let mut scope_ring = vec![0f32; scope_cap];
         let mut block: Vec<f32> = Vec::with_capacity(8192);
-        let err_fn = |e| eprintln!("cpal stream error: {e}");
+        // Swallow stream errors: the UI owns the alternate screen, so anything
+        // written to stderr would corrupt the TUI.
+        let err_fn = |_| {};
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 config.into(),
@@ -101,15 +107,17 @@ impl AudioEngine {
                                 *s = 0.0;
                             }
                         }
-                        block.push(0.5 * (l + r));
+                        block.push(l);
+                        block.push(r);
                     }
-                    // fold this block into the rolling scope window, then publish
+                    // fold this block (interleaved stereo) into the rolling scope
+                    // window, then publish. `block.len()` is always even.
                     let n = block.len();
-                    if n >= SCOPE_LEN {
-                        scope_ring.copy_from_slice(&block[n - SCOPE_LEN..]);
+                    if n >= scope_cap {
+                        scope_ring.copy_from_slice(&block[n - scope_cap..]);
                     } else if n > 0 {
                         scope_ring.rotate_left(n);
-                        scope_ring[SCOPE_LEN - n..].copy_from_slice(&block);
+                        scope_ring[scope_cap - n..].copy_from_slice(&block);
                     }
                     scope_in.input_buffer_mut().copy_from_slice(&scope_ring);
                     scope_in.publish();
@@ -151,7 +159,7 @@ impl AudioEngine {
         let _ = self.cmd_tx.send(cmd);
     }
 
-    /// Latest mono scope window (most recent at the end).
+    /// Latest interleaved-stereo scope window (`SCOPE_LEN * 2`, most recent last).
     pub fn scope(&mut self) -> &[f32] {
         self.scope_out.read()
     }
@@ -192,16 +200,22 @@ fn decode_loop(
         while let Ok(cmd) = cmd_rx.try_recv() {
             got_cmd = true;
             match cmd {
-                TransportCmd::Open(path) => match load_track(&path, device_sr) {
-                    Ok(dec) => {
+                TransportCmd::Open(path) => {
+                    // Reset transport up-front so a failed decode leaves a clean
+                    // stopped state (dur = 0) rather than stale values, which
+                    // would otherwise make the UI's end-of-track detector fire
+                    // every tick and storm-advance through the list.
+                    audio = None;
+                    cursor = 0;
+                    pos_frames.store(0, Ordering::Relaxed);
+                    dur_frames.store(0, Ordering::Relaxed);
+                    playing.store(false, Ordering::Relaxed);
+                    if let Ok(dec) = load_track(&path, device_sr) {
                         dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
-                        cursor = 0;
-                        pos_frames.store(0, Ordering::Relaxed);
                         audio = Some(dec);
                         playing.store(true, Ordering::Relaxed);
                     }
-                    Err(e) => eprintln!("decode failed for {}: {e}", path.display()),
-                },
+                }
                 TransportCmd::Toggle => {
                     let p = !playing.load(Ordering::Relaxed);
                     playing.store(p, Ordering::Relaxed);

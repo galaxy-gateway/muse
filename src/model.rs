@@ -16,9 +16,9 @@ pub struct Node {
     pub parent: Option<NodeId>,
     pub children: Option<Vec<NodeId>>, // None = unscanned dir
     pub expanded: bool,
-    /// For files: byte size. For dirs: summed size of immediate media files.
+    /// For files: byte size. For dirs: summed size of all media files within (recursive).
     pub size: u64,
-    /// For dirs: count of immediate entries (subdirs + media files).
+    /// For dirs: count of media files within (recursive). 0 for files.
     pub count: usize,
 }
 
@@ -52,7 +52,7 @@ impl TreeModel {
             visible: Vec::new(),
         };
         model.scan(0, reg);
-        model.rebuild_visible(None);
+        model.rebuild_visible();
         model
     }
 
@@ -95,9 +95,12 @@ impl TreeModel {
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let is_media = !is_dir && reg.is_supported(&path);
-            // Shallow stats so collapsed dirs still show an indicator.
+            // Recursive media stats: a dir with no music anywhere below is hidden.
             let count = if is_dir {
                 let (c, s) = Self::dir_stats(&path, reg);
+                if c == 0 {
+                    continue; // prune music-less directories
+                }
                 size = s;
                 c
             } else {
@@ -121,8 +124,9 @@ impl TreeModel {
         self.nodes[id].children = Some(kids);
     }
 
-    /// Count immediate entries (subdirs + supported media) and sum immediate
-    /// media-file sizes for `dir`. One level deep; no recursion.
+    /// Count all supported media files within `dir` (recursive) and sum their
+    /// sizes. Used both to display per-dir totals and to prune dirs holding no
+    /// music anywhere below them.
     fn dir_stats(dir: &Path, reg: &Registry) -> (usize, u64) {
         let mut count = 0;
         let mut size = 0;
@@ -136,7 +140,9 @@ impl TreeModel {
                 }
                 let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 if is_dir {
-                    count += 1;
+                    let (c, s) = Self::dir_stats(&p, reg);
+                    count += c;
+                    size += s;
                 } else if reg.is_supported(&p) {
                     count += 1;
                     size += e.metadata().map(|m| m.len()).unwrap_or(0);
@@ -146,28 +152,24 @@ impl TreeModel {
         (count, size)
     }
 
-    /// Recompute the flattened visible list. `filter` hides non-matching media files.
-    pub fn rebuild_visible(&mut self, filter: Option<&str>) {
+    /// Recompute the flattened visible list from the tree's expand state.
+    /// (Fuzzy filtering is a separate flat-results view handled in `App`.)
+    pub fn rebuild_visible(&mut self) {
         let mut out = Vec::new();
         let kids = self.nodes[self.root].children.clone().unwrap_or_default();
         for k in kids {
-            self.push_visible(k, filter, &mut out);
+            self.push_visible(k, &mut out);
         }
         self.visible = out;
     }
 
-    fn push_visible(&self, id: NodeId, filter: Option<&str>, out: &mut Vec<NodeId>) {
-        let node = &self.nodes[id];
-        if let Some(f) = filter {
-            if !node.is_dir && !node.name.to_lowercase().contains(f) {
-                return;
-            }
-        }
+    fn push_visible(&self, id: NodeId, out: &mut Vec<NodeId>) {
         out.push(id);
+        let node = &self.nodes[id];
         if node.is_dir && node.expanded {
             if let Some(children) = &node.children {
                 for &c in children {
-                    self.push_visible(c, filter, out);
+                    self.push_visible(c, out);
                 }
             }
         }

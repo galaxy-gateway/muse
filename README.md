@@ -11,14 +11,26 @@ muse ~/Music    # explore a directory
 
 ## Status: MVP (Phase 0–1)
 
-- Lazy recursive file tree (dirs scanned on expand; dotfiles + non-media hidden)
+- Lazy recursive file tree (dirs scanned on expand; dotfiles, non-media, and
+  directories holding no music anywhere below them are hidden)
 - Audio playback via symphonia → cpal, with an ffmpeg fallback decoder
 - **Live oscilloscope** (braille canvas, sample-synced via a `triple_buffer` tap
-  in the audio callback)
+  in the audio callback) with cyclable presets (`v`): line, fast, mirror, dots,
+  bars, and a stereo XY / Lissajous vectorscope — each bundles a render style,
+  signal mode, time-window, and auto-gain setting
 - **Static waveform** overview (background peak-bin analysis, cached) with a
   playhead
+- `selection` panel (above the file tree) follows the cursor; a separate
+  `now playing` panel tracks the engine's current track
 - Read-only metadata panel (title / artist / album / genre / codec) via lofty
 - Transport bar: play/pause, seek, volume, progress
+- Fuzzy finder (`/`): searches a background-built index of every track (never
+  blocks the UI); flat ranked results, `⏎` applies, `esc` resets to the tree
+- Color themes (`t`): `midnight` plus pride-flag palettes (pride, trans, bi,
+  lesbian, pan, nonbinary, ace) and a `prismatic` mode with rainbow borders that
+  shift over time
+- Remembers the last scope preset and theme between launches (TOML at the
+  platform config dir)
 
 Architecture leaves a `MediaProvider` seam (`src/media.rs`) so image/video
 preview + compare can be added later without touching the core.
@@ -35,7 +47,11 @@ preview + compare can be added later without touching the core.
 | `space` / `p` | play / pause |
 | `,` / `.` | seek −5s / +5s |
 | `-` / `+` | volume |
-| `/` | filter (esc clears) |
+| `v` / `V` | cycle scope preset (forward / back) |
+| `t` / `T` | cycle color theme (forward / back) |
+| `n` / `p` | next / previous track |
+| `r` | loop mode (off / all / one) |
+| `/` | fuzzy find (⏎ apply · esc reset) |
 | `?` / `q` | help / quit |
 
 ## Build

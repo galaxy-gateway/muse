@@ -10,7 +10,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 
 use crate::audio::{AudioEngine, TransportCmd};
-use crate::config::Theme;
+use crate::config::{
+    SCOPE_PRESETS, ScopePreset, Settings, THEMES, Theme, load_settings, save_settings,
+};
 use crate::event::AppEvent;
 use crate::media::{Meta, Registry};
 use crate::model::{NodeId, TreeModel};
@@ -18,11 +20,43 @@ use crate::model::{NodeId, TreeModel};
 /// Number of static-waveform bins computed per track (resolution-independent).
 const WAVE_BINS: usize = 1600;
 
+/// Auto-advance / repeat behavior when a track finishes, cycled with `r`.
+#[derive(Clone, Copy, PartialEq)]
+pub enum LoopMode {
+    /// Stop at the end of the list.
+    Off,
+    /// Advance, wrapping from last back to first.
+    All,
+    /// Repeat the current track.
+    One,
+}
+
+impl LoopMode {
+    fn next(self) -> Self {
+        match self {
+            LoopMode::Off => LoopMode::All,
+            LoopMode::All => LoopMode::One,
+            LoopMode::One => LoopMode::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LoopMode::Off => "loop off",
+            LoopMode::All => "loop all",
+            LoopMode::One => "loop one",
+        }
+    }
+}
+
 pub struct App {
     pub tree: TreeModel,
     pub registry: Registry,
     pub engine: AudioEngine,
     pub theme: Theme,
+    pub theme_idx: usize,
+    /// Monotonic redraw counter, drives prismatic border animation.
+    pub frame: u64,
     pub list_state: ListState,
 
     pub meta_cache: HashMap<PathBuf, Meta>,
@@ -31,11 +65,18 @@ pub struct App {
     pub wave_gen: u64,
 
     pub now_playing: Option<PathBuf>,
+    pub loop_mode: LoopMode,
+    /// Previous engine play-state, to detect the end-of-track falling edge.
+    prev_playing: bool,
     pub scope_buf: Vec<f32>,
-    pub status: String,
+    pub scope_idx: usize,
 
     pub filter: String,
     pub filtering: bool,
+    /// Flat fuzzy-result paths (used while a filter is active).
+    pub filtered: Vec<PathBuf>,
+    /// Full background-built media-file index searched by the fuzzy filter.
+    pub index: Vec<PathBuf>,
     pub show_help: bool,
     pub should_quit: bool,
 
@@ -51,21 +92,39 @@ impl App {
         if !tree.visible.is_empty() {
             list_state.select(Some(0));
         }
+        // Restore the last-used scope preset + theme.
+        let settings = load_settings();
+        let scope_idx = settings
+            .scope_preset
+            .as_deref()
+            .and_then(|name| SCOPE_PRESETS.iter().position(|p| p.name == name))
+            .unwrap_or(0);
+        let theme_idx = settings
+            .theme
+            .as_deref()
+            .and_then(|name| THEMES.iter().position(|t| t.name == name))
+            .unwrap_or(0);
         let mut app = Self {
             tree,
             registry,
             engine,
-            theme: Theme::default(),
+            theme: THEMES[theme_idx],
+            theme_idx,
+            frame: 0,
             list_state,
             meta_cache: HashMap::new(),
             wave_cache: HashMap::new(),
             wave_pending: None,
             wave_gen: 0,
             now_playing: None,
-            scope_buf: vec![0.0; crate::audio::SCOPE_LEN],
-            status: "↑↓ move · l expand · ⏎ play · space pause · ←→ seek · / filter · ? help · q quit".into(),
+            loop_mode: LoopMode::Off,
+            prev_playing: false,
+            scope_buf: vec![0.0; crate::audio::SCOPE_LEN * 2],
+            scope_idx,
             filter: String::new(),
             filtering: false,
+            filtered: Vec::new(),
+            index: Vec::new(),
             show_help: false,
             should_quit: false,
             tx,
@@ -74,21 +133,67 @@ impl App {
         Ok(app)
     }
 
+    pub fn scope_preset(&self) -> ScopePreset {
+        SCOPE_PRESETS[self.scope_idx % SCOPE_PRESETS.len()]
+    }
+
+    fn cycle_scope(&mut self, delta: i32) {
+        let n = SCOPE_PRESETS.len() as i32;
+        self.scope_idx = (((self.scope_idx as i32 + delta) % n + n) % n) as usize;
+        self.persist();
+    }
+
+    fn cycle_theme(&mut self, delta: i32) {
+        let n = THEMES.len() as i32;
+        self.theme_idx = (((self.theme_idx as i32 + delta) % n + n) % n) as usize;
+        self.theme = THEMES[self.theme_idx];
+        self.persist();
+    }
+
+    fn persist(&self) {
+        save_settings(&Settings {
+            scope_preset: Some(self.scope_preset().name.to_string()),
+            theme: Some(self.theme.name.to_string()),
+        });
+    }
+
+    /// Whether the fuzzy filter is driving the list (vs. the file tree).
+    pub fn filter_active(&self) -> bool {
+        !self.filter.is_empty()
+    }
+
+    pub fn root_path(&self) -> PathBuf {
+        self.tree.node(self.tree.root).path.clone()
+    }
+
+    /// The selected tree node — `None` while the fuzzy filter is active (the
+    /// flat result list has no tree nodes), which also gates expand/collapse.
     pub fn cursor(&self) -> Option<NodeId> {
+        if self.filter_active() {
+            return None;
+        }
         self.list_state
             .selected()
             .and_then(|i| self.tree.visible.get(i).copied())
     }
 
     pub fn cursor_path(&self) -> Option<PathBuf> {
-        self.cursor().map(|id| self.tree.node(id).path.clone())
+        let i = self.list_state.selected()?;
+        if self.filter_active() {
+            self.filtered.get(i).cloned()
+        } else {
+            self.tree
+                .visible
+                .get(i)
+                .map(|&id| self.tree.node(id).path.clone())
+        }
     }
 
-    fn filter_opt(&self) -> Option<String> {
-        if self.filter.is_empty() {
-            None
+    fn list_len(&self) -> usize {
+        if self.filter_active() {
+            self.filtered.len()
         } else {
-            Some(self.filter.to_lowercase())
+            self.tree.visible.len()
         }
     }
 
@@ -97,6 +202,8 @@ impl App {
             AppEvent::Input(key) => self.on_key(key),
             AppEvent::Tick => {
                 self.scope_buf.copy_from_slice(self.engine.scope());
+                self.check_track_end();
+                self.frame = self.frame.wrapping_add(1);
             }
             AppEvent::Wave(path, token, bins) => {
                 if token == self.wave_gen {
@@ -104,6 +211,12 @@ impl App {
                     if self.wave_pending.as_ref() == Some(&path) {
                         self.wave_pending = None;
                     }
+                }
+            }
+            AppEvent::Index(files) => {
+                self.index = files;
+                if self.filter_active() {
+                    self.rebuild_filtered();
                 }
             }
         }
@@ -115,7 +228,15 @@ impl App {
             return;
         }
         if self.show_help {
-            self.show_help = false;
+            // Modal: only q / esc dismiss; everything else is swallowed.
+            if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
+                self.show_help = false;
+            }
+            return;
+        }
+        // Esc in normal mode clears an applied filter, restoring the tree view.
+        if key.code == KeyCode::Esc && self.filter_active() {
+            self.clear_filter();
             return;
         }
         match (key.code, key.modifiers) {
@@ -125,72 +246,105 @@ impl App {
             (KeyCode::Char('?'), _) => self.show_help = true,
             (KeyCode::Char('/'), _) => {
                 self.filtering = true;
-                self.status = "filter: ".into();
+                self.list_state.select(if self.filtered.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
             }
             (KeyCode::Char('j'), _) | (KeyCode::Down, _) => self.move_cursor(1),
             (KeyCode::Char('k'), _) | (KeyCode::Up, _) => self.move_cursor(-1),
             (KeyCode::Char('g'), _) | (KeyCode::Home, _) => self.select(0),
             (KeyCode::Char('G'), _) | (KeyCode::End, _) => {
-                self.select(self.tree.visible.len().saturating_sub(1))
+                self.select(self.list_len().saturating_sub(1))
             }
             (KeyCode::Char('h'), _) | (KeyCode::Left, _) => self.collapse_or_parent(),
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => self.expand(),
             (KeyCode::Enter, _) => self.enter(),
-            (KeyCode::Char(' '), _) | (KeyCode::Char('p'), _) => {
-                self.engine.send(TransportCmd::Toggle)
-            }
+            (KeyCode::Char(' '), _) => self.engine.send(TransportCmd::Toggle),
+            (KeyCode::Char('n'), _) => self.play_relative(1),
+            (KeyCode::Char('p'), _) => self.play_relative(-1),
+            (KeyCode::Char('r'), _) => self.loop_mode = self.loop_mode.next(),
             (KeyCode::Char('.'), _) => self.engine.send(TransportCmd::SeekRel(5.0)),
             (KeyCode::Char(','), _) => self.engine.send(TransportCmd::SeekRel(-5.0)),
             (KeyCode::Char('+'), _) | (KeyCode::Char('='), _) => {
                 self.engine.send(TransportCmd::VolRel(0.05))
             }
             (KeyCode::Char('-'), _) => self.engine.send(TransportCmd::VolRel(-0.05)),
+            (KeyCode::Char('v'), _) => self.cycle_scope(1),
+            (KeyCode::Char('V'), _) => self.cycle_scope(-1),
+            (KeyCode::Char('t'), _) => self.cycle_theme(1),
+            (KeyCode::Char('T'), _) => self.cycle_theme(-1),
             _ => {}
         }
     }
 
     fn filter_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => {
-                self.filtering = false;
-                self.filter.clear();
-                self.refilter();
-            }
+            // Esc cancels: clear the query and return to the tree + normal keys.
+            KeyCode::Esc => self.clear_filter(),
+            // Enter accepts the filter; stop typing but keep results for nav/play.
             KeyCode::Enter => self.filtering = false,
             KeyCode::Backspace => {
                 self.filter.pop();
-                self.refilter();
+                self.rebuild_filtered();
             }
             KeyCode::Char(c) => {
                 self.filter.push(c);
-                self.refilter();
+                self.rebuild_filtered();
             }
             _ => {}
         }
     }
 
-    fn refilter(&mut self) {
-        let f = self.filter_opt();
-        self.tree.rebuild_visible(f.as_deref());
-        if self.tree.visible.is_empty() {
-            self.list_state.select(None);
-        } else {
-            let i = self
-                .list_state
-                .selected()
-                .unwrap_or(0)
-                .min(self.tree.visible.len() - 1);
-            self.list_state.select(Some(i));
+    /// Exit filtering entirely: drop the query/results and restore the tree
+    /// view with the cursor on the first row.
+    fn clear_filter(&mut self) {
+        self.filtering = false;
+        self.filter.clear();
+        self.filtered.clear();
+        self.list_state
+            .select((!self.tree.visible.is_empty()).then_some(0));
+        self.on_selection_changed();
+    }
+
+    /// Recompute fuzzy results from the background index against the query.
+    fn rebuild_filtered(&mut self) {
+        if self.filter.is_empty() {
+            self.filtered.clear();
+            self.list_state
+                .select((!self.tree.visible.is_empty()).then_some(0));
+            self.on_selection_changed();
+            return;
         }
+        let q = self.filter.to_lowercase();
+        let root = self.root_path();
+        let mut scored: Vec<(i32, &PathBuf)> = self
+            .index
+            .iter()
+            .filter_map(|p| {
+                let hay = p
+                    .strip_prefix(&root)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_lowercase();
+                crate::util::fuzzy_score(&q, &hay).map(|s| (s, p))
+            })
+            .collect();
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+        self.filtered = scored.into_iter().map(|(_, p)| p.clone()).collect();
+        self.list_state
+            .select((!self.filtered.is_empty()).then_some(0));
         self.on_selection_changed();
     }
 
     fn move_cursor(&mut self, delta: i32) {
-        if self.tree.visible.is_empty() {
+        let len = self.list_len();
+        if len == 0 {
             return;
         }
         let cur = self.list_state.selected().unwrap_or(0) as i32;
-        let max = self.tree.visible.len() as i32 - 1;
+        let max = len as i32 - 1;
         self.select((cur + delta).clamp(0, max) as usize);
     }
 
@@ -200,11 +354,19 @@ impl App {
     }
 
     fn expand(&mut self) {
-        if let Some(id) = self.cursor() {
-            if self.tree.node(id).is_dir {
-                self.tree.scan(id, &self.registry);
-                self.tree.nodes[id].expanded = true;
-                self.refilter_keep();
+        let Some(id) = self.cursor() else { return };
+        if !self.tree.node(id).is_dir {
+            return;
+        }
+        self.tree.scan(id, &self.registry);
+        self.tree.nodes[id].expanded = true;
+        self.refilter_keep();
+        // Descend: move the cursor onto the dir's first visible child, if any.
+        if let Some(pos) = self.tree.visible.iter().position(|&v| v == id) {
+            if let Some(&next) = self.tree.visible.get(pos + 1) {
+                if self.tree.node(next).parent == Some(id) {
+                    self.select(pos + 1);
+                }
             }
         }
     }
@@ -225,6 +387,13 @@ impl App {
     }
 
     fn enter(&mut self) {
+        // In fuzzy-filter mode the row is a flat result path: play it.
+        if self.filter_active() {
+            if let Some(path) = self.cursor_path() {
+                self.play_path(path);
+            }
+            return;
+        }
         let Some(id) = self.cursor() else { return };
         let node = self.tree.node(id);
         if node.is_dir {
@@ -234,16 +403,94 @@ impl App {
             self.refilter_keep();
         } else if node.is_media {
             let path = node.path.clone();
-            self.engine.send(TransportCmd::Open(path.clone()));
-            self.now_playing = Some(path);
+            self.play_path(path);
+        }
+    }
+
+    /// Start playback of `path` (if it's a supported media file).
+    fn play_path(&mut self, path: PathBuf) {
+        if !self.registry.is_supported(&path) {
+            return;
+        }
+        self.engine.send(TransportCmd::Open(path.clone()));
+        self.now_playing = Some(path);
+        // Open will flip the engine to playing; arm end-of-track detection.
+        self.prev_playing = true;
+    }
+
+    /// Ordered media paths in the current view (filtered results, else the
+    /// visible tree's media files) — the list `n`/`p` and auto-advance walk.
+    fn current_media(&self) -> Vec<PathBuf> {
+        if self.filter_active() {
+            self.filtered.clone()
+        } else {
+            self.tree
+                .visible
+                .iter()
+                .filter_map(|&id| {
+                    let n = self.tree.node(id);
+                    n.is_media.then(|| n.path.clone())
+                })
+                .collect()
+        }
+    }
+
+    /// Play the track `delta` steps from the current one in the view list,
+    /// wrapping around the ends. Used by `n` / `p`.
+    fn play_relative(&mut self, delta: i32) {
+        let list = self.current_media();
+        if list.is_empty() {
+            return;
+        }
+        let cur = self
+            .now_playing
+            .as_ref()
+            .and_then(|p| list.iter().position(|x| x == p));
+        let len = list.len() as i32;
+        let idx = match cur {
+            Some(i) => (i as i32 + delta).rem_euclid(len),
+            None => 0,
+        };
+        self.play_path(list[idx as usize].clone());
+    }
+
+    /// On the play->stop edge at the end of a track, apply the loop mode.
+    fn check_track_end(&mut self) {
+        let playing = self.engine.is_playing();
+        let dur = self.engine.duration_secs();
+        let ended =
+            self.prev_playing && !playing && dur > 0.0 && self.engine.position_secs() >= dur - 0.05;
+        self.prev_playing = playing;
+        if !ended {
+            return;
+        }
+        match self.loop_mode {
+            LoopMode::Off => {
+                // advance, but stop at the end of the list
+                let list = self.current_media();
+                let next = self
+                    .now_playing
+                    .as_ref()
+                    .and_then(|p| list.iter().position(|x| x == p))
+                    .map(|i| i + 1)
+                    .filter(|&i| i < list.len());
+                if let Some(i) = next {
+                    self.play_path(list[i].clone());
+                }
+            }
+            LoopMode::All => self.play_relative(1),
+            LoopMode::One => {
+                if let Some(p) = self.now_playing.clone() {
+                    self.play_path(p);
+                }
+            }
         }
     }
 
     /// Rebuild visible but keep the current cursor node selected if still visible.
     fn refilter_keep(&mut self) {
         let keep = self.cursor();
-        let f = self.filter_opt();
-        self.tree.rebuild_visible(f.as_deref());
+        self.tree.rebuild_visible();
         if let Some(k) = keep {
             if let Some(pos) = self.tree.visible.iter().position(|&v| v == k) {
                 self.list_state.select(Some(pos));
@@ -254,7 +501,9 @@ impl App {
 
     /// Lazy-load metadata + kick off a waveform compute for the selected media.
     fn on_selection_changed(&mut self) {
-        let Some(path) = self.cursor_path() else { return };
+        let Some(path) = self.cursor_path() else {
+            return;
+        };
         if !self.registry.is_supported(&path) {
             return;
         }

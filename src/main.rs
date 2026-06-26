@@ -17,13 +17,13 @@ use anyhow::Result;
 use crossbeam_channel::unbounded;
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::app::App;
-use crate::event::{spawn_input, spawn_ticks, AppEvent};
+use crate::event::{AppEvent, spawn_index, spawn_input, spawn_ticks};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -51,6 +51,7 @@ fn main() -> Result<()> {
 
     spawn_input(tx.clone());
     spawn_ticks(tx.clone());
+    spawn_index(dir.clone(), tx.clone());
 
     let res = run(&mut terminal, &mut app, rx);
 
