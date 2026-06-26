@@ -45,15 +45,23 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(cols[1]);
     app.wave_rect = inspector[1];
     app.transport_rect = root[1];
+    app.scope_rect = inspector[2];
+    app.screen = f.area();
 
     draw_selection(f, app, left[0]);
     draw_tree(f, app, left[1]);
     draw_inspector(f, app, cols[1]);
     draw_transport(f, app, root[1]);
 
-    if app.theme.anim == Anim::Snow {
-        draw_snow(f, app);
+    match app.theme.anim {
+        Anim::Snow => draw_snow(f, app),
+        Anim::Flame => draw_flame_effects(f, app),
+        Anim::Flag => draw_flag(f, app, inspector[0]),
+        Anim::Glitch => draw_glitch(f, app),
+        Anim::Electric => draw_electric_effects(f, app),
+        _ => {}
     }
+    draw_hover_seek(f, app);
     if app.show_theme {
         draw_theme_modal(f, app);
     }
@@ -129,6 +137,316 @@ fn draw_snow(f: &mut Frame, app: &App) {
         cell.set_char(GLYPHS[k as usize % GLYPHS.len()]);
         cell.set_fg(shade);
     }
+}
+
+/// Pick a flame glyph + color by intensity `t` (0 = hot/young, 1 = cool/old).
+fn flame_glyph(t: f64, seed: u32) -> (char, Color) {
+    let pick = |arr: &[char]| arr[seed as usize % arr.len()];
+    if t < 0.34 {
+        (
+            pick(&['✦', '▲', '✸', '♦', '✺']),
+            Color::Rgb(0xd8, 0xff, 0x66),
+        )
+    } else if t < 0.67 {
+        (pick(&['◆', '✧', '*', '♢']), Color::Rgb(0x39, 0xff, 0x14))
+    } else {
+        (pick(&['·', '˙', '°', '‧']), Color::Rgb(0x1f, 0x9d, 0x3a))
+    }
+}
+
+/// Animated three-row Calcifer sprite (flame tip, blinking eyes, wiggling mouth).
+fn calcifer_rows(frame: u64) -> [(String, Color); 3] {
+    let tip = match (frame / 5) % 4 {
+        0 => "(^^^)",
+        1 => "(~^~)",
+        2 => "(^~^)",
+        _ => "(v^v)",
+    };
+    let eyes = if frame % 64 < 4 { "‐ ‐" } else { "◉ ◉" };
+    let mouth = match (frame / 11) % 3 {
+        0 => "\\▽/",
+        1 => "\\○/",
+        _ => "\\◡/",
+    };
+    [
+        (format!(" {tip} "), Color::Rgb(0xaa, 0xff, 0x33)),
+        (format!(" ({eyes}) "), Color::Rgb(0xd8, 0xff, 0x66)),
+        (format!("  {mouth}  "), Color::Rgb(0x39, 0xff, 0x14)),
+    ]
+}
+
+/// Flame-theme overlays: navigation particles, a burning playhead column, and
+/// the Calcifer fireball in the top-right corner.
+fn draw_flame_effects(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let frame = app.frame as u32;
+
+    let wr = app.wave_rect;
+    let dur = app.engine.duration_secs();
+    let pos = app.engine.position_secs();
+    let playing = app.engine.is_playing();
+    let frac = if dur > 0.0 && app.now_playing.is_some() && playing {
+        Some((pos / dur).clamp(0.0, 1.0))
+    } else {
+        None
+    };
+    let cal = calcifer_rows(app.frame);
+    let fphase = app.frame as f64;
+    let buf = f.buffer_mut();
+
+    // Particles (nav bursts, click radials, scope shoot-offs).
+    for p in &app.particles {
+        let (x, y) = (p.x.round() as i32, p.y.round() as i32);
+        if x < area.x as i32
+            || x >= area.right() as i32
+            || y < area.y as i32
+            || y >= area.bottom() as i32
+        {
+            continue;
+        }
+        let t = p.age as f64 / p.life.max(1) as f64;
+        let (ch, col) = flame_glyph(t, p.seed ^ frame);
+        let cell = &mut buf[(x as u16, y as u16)];
+        cell.set_char(ch);
+        cell.set_fg(col);
+    }
+
+    // Burning playhead — a small flame cluster pinned to the play column that
+    // oscillates up and down the seek line as the song plays.
+    if let Some(frac) = frac {
+        if wr.width > 2 && wr.height > 3 {
+            let cx = wr.x + 1 + (frac * (wr.width - 2) as f64) as u16;
+            let top = (wr.y + 1) as f64;
+            let bottom = (wr.y + wr.height - 2) as f64;
+            let mid = (top + bottom) / 2.0;
+            let amp = (bottom - top) / 2.0;
+            let yc = mid + (fphase * 0.14).sin() * amp;
+            for dy in -2i32..=2 {
+                let y = (yc.round() as i32 + dy).clamp(top as i32, bottom as i32) as u16;
+                let n = crate::util::noise(frame + dy as u32 * 17, cx as u32);
+                let (ch, col) = flame_glyph(dy.unsigned_abs() as f64 / 2.0, n);
+                let cell = &mut buf[(cx, y)];
+                cell.set_char(ch);
+                cell.set_fg(col);
+            }
+        }
+    }
+
+    // Calcifer, top-right.
+    if area.width > 12 && area.height > 4 {
+        let bx = area.right().saturating_sub(8);
+        for (i, (text, color)) in cal.iter().enumerate() {
+            let y = area.y + i as u16;
+            if y < area.bottom() {
+                buf.set_string(bx, y, text, Style::default().fg(*color));
+            }
+        }
+    }
+}
+
+/// Electric overlay: spark particles + lightning bolts inside the oscilloscope.
+fn draw_electric_effects(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let (w, h) = (area.width, area.height);
+    if w < 4 || h < 4 {
+        return;
+    }
+    let frame = app.frame as u32;
+    let sr = app.scope_rect;
+    let peak = app.scope_buf.iter().fold(0f32, |m, &s| m.max(s.abs()));
+    let buf = f.buffer_mut();
+
+    // Spark particles (nav / click / scope), electric palette.
+    for p in &app.particles {
+        let (x, y) = (p.x.round() as i32, p.y.round() as i32);
+        if x < area.x as i32
+            || x >= area.right() as i32
+            || y < area.y as i32
+            || y >= area.bottom() as i32
+        {
+            continue;
+        }
+        let (ch, col) = spark_glyph(p.age as f64 / p.life.max(1) as f64, p.seed ^ frame);
+        let cell = &mut buf[(x as u16, y as u16)];
+        cell.set_char(ch);
+        cell.set_fg(col);
+    }
+
+    // Lightning bolts strike inside the oscilloscope when it peaks loud
+    // (same amplitude trigger as the spark particles).
+    if sr.width > 3 && sr.height > 3 && peak >= 0.12 && crate::util::noise(frame / 2, 7) % 3 == 0 {
+        let bolts = 1 + crate::util::noise(frame, 3) % 2;
+        let lo = (sr.x + 1) as i32;
+        let hi = (sr.x + sr.width - 2) as i32;
+        for b in 0..bolts {
+            let seed = crate::util::noise(frame / 2, b * 53 + 11);
+            let mut x = lo + (seed % (sr.width - 2).max(1) as u32) as i32;
+            for y in (sr.y + 1)..(sr.y + sr.height - 1) {
+                let n = crate::util::noise(seed + y as u32, frame);
+                let dx = (n % 3) as i32 - 1;
+                x = (x + dx).clamp(lo, hi);
+                let ch = match dx {
+                    d if d < 0 => '╲',
+                    d if d > 0 => '╱',
+                    _ => '│',
+                };
+                let col = if n % 4 == 0 {
+                    Color::Rgb(0xff, 0xff, 0xff)
+                } else {
+                    Color::Rgb(0x9d, 0xf0, 0xff)
+                };
+                let cell = &mut buf[(x as u16, y)];
+                cell.set_char(ch);
+                cell.set_fg(col);
+            }
+        }
+    }
+}
+
+/// Electric spark glyph + color by age (0 = hot/white bolt, 1 = fading blue).
+fn spark_glyph(t: f64, seed: u32) -> (char, Color) {
+    let pick = |arr: &[char]| arr[seed as usize % arr.len()];
+    if t < 0.4 {
+        (pick(&['↯', '⚡', '✦', '+']), Color::Rgb(0xff, 0xff, 0xff))
+    } else if t < 0.7 {
+        (pick(&['✦', '×', '+', '·']), Color::Rgb(0x4d, 0xd2, 0xff))
+    } else {
+        (pick(&['·', '˙', '+']), Color::Rgb(0x2b, 0x8c, 0xff))
+    }
+}
+
+/// Retro glitch overlay: a few jumping artifact bands plus scattered noise
+/// glyphs, in green with cyan/magenta channel-split flecks.
+fn draw_glitch(f: &mut Frame, app: &App) {
+    const GLYPHS: [char; 14] = [
+        '▓', '▒', '░', '█', '▚', '▞', '▙', '▟', '╳', '┊', '/', '\\', '¦', '╎',
+    ];
+    const COLORS: [Color; 4] = [
+        Color::Rgb(0x33, 0xff, 0x66),
+        Color::Rgb(0x00, 0xff, 0xff),
+        Color::Rgb(0xff, 0x00, 0xcc),
+        Color::Rgb(0x00, 0xff, 0x88),
+    ];
+    let area = f.area();
+    let (w, h) = (area.width as u32, area.height as u32);
+    if w < 4 || h < 4 {
+        return;
+    }
+    // Slow the whole effect down: only update the glitch state every ~10 frames.
+    let slot = app.frame as u32 / 10;
+    let buf = f.buffer_mut();
+
+    // A couple of horizontal artifact bands that occasionally appear.
+    for b in 0..2u32 {
+        let on = crate::util::noise(slot + b * 97, b * 13 + 5);
+        if on % 7 != 0 {
+            continue; // band idle this slot (rarer)
+        }
+        let y = (crate::util::noise(slot, b * 31) % h) as u16;
+        let x0 = (crate::util::noise(slot + 1, b * 17) % w) as u16;
+        let len = 3 + (crate::util::noise(slot, b * 7) % (w / 3).max(1)) as u16;
+        for i in 0..len {
+            let x = area.x + x0 + i;
+            if x >= area.right() {
+                break;
+            }
+            let s = crate::util::noise(slot + i as u32, b * 101 + y as u32);
+            let cell = &mut buf[(x, area.y + y)];
+            cell.set_char(GLYPHS[s as usize % GLYPHS.len()]);
+            cell.set_fg(COLORS[(s as usize / 7) % COLORS.len()]);
+        }
+    }
+
+    // Sparse scattered sparkle artifacts (calm).
+    let scatter = (w * h / 200).max(4);
+    for k in 0..scatter {
+        let s = crate::util::noise(slot.wrapping_add(k.wrapping_mul(40_503)), k ^ slot);
+        if s % 11 != 0 {
+            continue;
+        }
+        let x = area.x + (s % w) as u16;
+        let y = area.y + ((s / w) % h) as u16;
+        let cell = &mut buf[(x, y)];
+        cell.set_char(GLYPHS[(s as usize / 3) % GLYPHS.len()]);
+        cell.set_fg(COLORS[s as usize % COLORS.len()]);
+    }
+}
+
+/// Small static stars-and-stripes in the top-right of the now-playing panel,
+/// plus click-fireworks (Flag theme). Left side keeps the track text.
+fn draw_flag(f: &mut Frame, app: &App, panel: Rect) {
+    let red = Color::Rgb(0xb2, 0x22, 0x34);
+    let white = Color::Rgb(0xf2, 0xf2, 0xf2);
+    let blue = Color::Rgb(0x3c, 0x3b, 0x6e);
+    if panel.width >= 12 && panel.height >= 4 {
+        let inner_w = panel.width - 2;
+        let h = panel.height - 2;
+        // Small but detailed: ~30% of the inner width, top-right corner.
+        let fw = ((inner_w as u32 * 12 / 40) as u16).clamp(9, inner_w);
+        let fx = panel.x + 1 + (inner_w - fw);
+        let y0 = panel.y + 1;
+        let canton_w = (fw / 2).max(5);
+        // Taller blue field so it holds at least two rows of stars.
+        let canton_h = (h * 2 / 3).max(2).min(h);
+        // Half-block stripes: 2 stripes per cell row -> ~13-stripe look in a
+        // few rows. Stripe 0 (top) is red, alternating down.
+        let stripe = |sub: i32| if sub.rem_euclid(2) == 0 { red } else { white };
+        let buf = f.buffer_mut();
+        for r in 0..h {
+            for c in 0..fw {
+                let cell = &mut buf[(fx + c, y0 + r)];
+                if r < canton_h && c < canton_w {
+                    // Solid blue canton with a sparse, row-offset star field.
+                    cell.set_bg(blue);
+                    if (c + r) % 2 == 0 {
+                        cell.set_char('★');
+                        cell.set_fg(white);
+                    } else {
+                        cell.set_char(' ');
+                    }
+                } else {
+                    cell.set_char('▀');
+                    cell.set_fg(stripe(2 * r as i32));
+                    cell.set_bg(stripe(2 * r as i32 + 1));
+                }
+            }
+        }
+    }
+
+    // Click fireworks: colorful bursts anywhere on screen.
+    let scr = app.screen;
+    let frame = app.frame as u32;
+    let buf = f.buffer_mut();
+    for p in &app.particles {
+        let (x, y) = (p.x.round() as i32, p.y.round() as i32);
+        if x < scr.x as i32
+            || x >= scr.right() as i32
+            || y < scr.y as i32
+            || y >= scr.bottom() as i32
+        {
+            continue;
+        }
+        let (ch, col) = firework_glyph(p.age as f64 / p.life.max(1) as f64, p.seed ^ frame);
+        let cell = &mut buf[(x as u16, y as u16)];
+        cell.set_char(ch);
+        cell.set_fg(col);
+    }
+}
+
+/// Firework spark glyph + a red/white/blue color per particle.
+fn firework_glyph(t: f64, seed: u32) -> (char, Color) {
+    let pick = |arr: &[char]| arr[seed as usize % arr.len()];
+    let col = match (seed / 5) % 3 {
+        0 => Color::Rgb(0xe0, 0x3b, 0x4a),
+        1 => Color::Rgb(0xff, 0xff, 0xff),
+        _ => Color::Rgb(0x5a, 0x7b, 0xff),
+    };
+    let ch = if t < 0.5 {
+        pick(&['✦', '✶', '*', '+'])
+    } else {
+        pick(&['·', '˙', '✧'])
+    };
+    (ch, col)
 }
 
 fn panel<'a>(title: &'a str, accent: ratatui::style::Color) -> Block<'a> {
@@ -218,15 +536,107 @@ const CMY_STOPS: &[(f64, f64, f64)] = &[
 /// per the theme's `anim`. `offset` spreads the animation across panels.
 fn border(theme: &Theme, frame: u64, base: Color, offset: f64) -> Color {
     match theme.anim {
-        Anim::None | Anim::Snow => base,
+        Anim::None | Anim::Snow | Anim::Flag => base,
         Anim::Prismatic => hue(frame as f64 * 0.012 + offset),
         Anim::TransSlow => gradient(TRANS_STOPS, frame as f64 * 0.0035 + offset * 0.25),
         Anim::Ripple => glow(base, frame, offset),
         Anim::Cmyk => gradient(CMY_STOPS, frame as f64 * 0.006 + offset),
+        Anim::Flame => {
+            // Erratic green flicker on the borders.
+            let n = crate::util::noise(frame as u32 / 2, (offset * 131.0) as u32) % 100;
+            let f = 0.55 + 0.45 * (n as f64 / 100.0);
+            let (r, g, b) = rgb_of(base);
+            Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
+        }
+        Anim::Glitch => {
+            // Mostly green, with occasional brief RGB-split jumps (calmer).
+            let n = crate::util::noise(frame as u32 / 9, (offset * 200.0) as u32) % 100;
+            if n < 4 {
+                Color::Rgb(0x00, 0xff, 0xff)
+            } else if n < 8 {
+                Color::Rgb(0xff, 0x00, 0xcc)
+            } else {
+                let f = 0.7 + 0.3 * ((n % 40) as f64 / 40.0);
+                let (r, g, b) = rgb_of(base);
+                Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
+            }
+        }
+        Anim::Electric => {
+            // Crackling cyan/white border flicker with occasional bright arcs.
+            let n = crate::util::noise(frame as u32, (offset * 173.0) as u32) % 100;
+            if n < 6 {
+                Color::Rgb(0xff, 0xff, 0xff)
+            } else if n < 14 {
+                Color::Rgb(0x9d, 0xf0, 0xff)
+            } else {
+                let f = 0.5 + 0.5 * (n as f64 / 100.0);
+                let (r, g, b) = rgb_of(base);
+                Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
+            }
+        }
     }
 }
 
+/// Hover affordance over the seek bars: a vertical guide at the pointer column
+/// showing where a click would seek to.
+fn draw_hover_seek(f: &mut Frame, app: &App) {
+    let Some((c, r)) = app.hover else { return };
+    let mark = app.theme.playing;
+    for rect in [app.wave_rect, app.transport_rect] {
+        if rect.width < 3 || rect.height < 2 {
+            continue;
+        }
+        if c <= rect.x || c >= rect.x + rect.width - 1 {
+            continue;
+        }
+        if r < rect.y || r >= rect.y + rect.height {
+            continue;
+        }
+        let buf = f.buffer_mut();
+        for y in (rect.y + 1)..(rect.y + rect.height - 1) {
+            let cell = &mut buf[(c, y)];
+            cell.set_char('│');
+            cell.set_fg(mark);
+        }
+        break;
+    }
+}
+
+/// Drop the first `n` display columns from a line of spans (horizontal scroll).
+fn trim_spans_left(spans: Vec<Span<'static>>, mut n: usize) -> Vec<Span<'static>> {
+    if n == 0 {
+        return spans;
+    }
+    let mut out = Vec::with_capacity(spans.len());
+    for sp in spans {
+        if n == 0 {
+            out.push(sp);
+            continue;
+        }
+        let len = sp.content.chars().count();
+        if len <= n {
+            n -= len;
+            continue;
+        }
+        let s: String = sp.content.chars().skip(n).collect();
+        n = 0;
+        out.push(Span::styled(s, sp.style));
+    }
+    out
+}
+
+/// Lighten a color by adding `d` to each channel (for the hover row tint).
+fn brighten(c: Color, d: u8) -> Color {
+    let (r, g, b) = rgb_of(c);
+    Color::Rgb(
+        (r as u8).saturating_add(d),
+        (g as u8).saturating_add(d),
+        (b as u8).saturating_add(d),
+    )
+}
+
 fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
+    app.tree_rect = area;
     let t = &app.theme;
     let bc = border(t, app.frame, t.accent, 0.0);
     let filtering = app.filtering || !app.filter.is_empty();
@@ -277,12 +687,24 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
         .border_style(Style::default().fg(bc))
         .title(title_line)
         .title_bottom(hint.right_aligned());
+    let hs = app.tree_hscroll as usize;
+    let hover_idx = app.hover.and_then(|(c, r)| app.tree_row_at(c, r));
+    let hover_bg = brighten(t.bg_sel, 0x1a);
+    let finish = |idx: usize, spans: Vec<Span<'static>>| -> ListItem<'static> {
+        let item = ListItem::new(Line::from(trim_spans_left(spans, hs)));
+        if Some(idx) == hover_idx {
+            item.style(Style::default().bg(hover_bg))
+        } else {
+            item
+        }
+    };
     let items: Vec<ListItem> = if filtering {
         // Flat fuzzy results: relative paths to matching media files.
         let root = app.root_path();
         app.filtered
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(idx, p)| {
                 let rel = p
                     .strip_prefix(&root)
                     .unwrap_or(p)
@@ -298,17 +720,21 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                 if playing {
                     style = style.add_modifier(Modifier::BOLD);
                 }
-                ListItem::new(Line::from(vec![
-                    Span::styled(icon, Style::default().fg(color)),
-                    Span::styled(rel, style),
-                ]))
+                finish(
+                    idx,
+                    vec![
+                        Span::styled(icon, Style::default().fg(color)),
+                        Span::styled(rel, style),
+                    ],
+                )
             })
             .collect()
     } else {
         app.tree
             .visible
             .iter()
-            .map(|&id| {
+            .enumerate()
+            .map(|(idx, &id)| {
                 let n = app.tree.node(id);
                 let indent = "  ".repeat(n.depth.saturating_sub(1));
                 let playing = app.now_playing.as_deref() == Some(n.path.as_path());
@@ -335,15 +761,18 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     String::new()
                 };
-                ListItem::new(Line::from(vec![
-                    Span::raw(indent),
-                    Span::styled(
-                        icon,
-                        Style::default().fg(if n.is_dir { t.accent2 } else { color }),
-                    ),
-                    Span::styled(n.name.clone(), style),
-                    Span::styled(meta, Style::default().fg(t.dim)),
-                ]))
+                finish(
+                    idx,
+                    vec![
+                        Span::raw(indent),
+                        Span::styled(
+                            icon,
+                            Style::default().fg(if n.is_dir { t.accent2 } else { color }),
+                        ),
+                        Span::styled(n.name.clone(), style),
+                        Span::styled(meta, Style::default().fg(t.dim)),
+                    ],
+                )
             })
             .collect()
     };
@@ -837,7 +1266,8 @@ fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  r                loop mode (off / all / one)"),
         Line::from("  , / .            seek -5s / +5s"),
         Line::from("  shift ← / →      scrub playhead -1s / +1s"),
-        Line::from("  click wave/bar   seek to that position"),
+        Line::from("  click tree       folder: fold · file: play"),
+        Line::from("  click/drag bar   seek / scrub the playhead"),
         Line::from("  media keys       play/pause/next/prev (OS)"),
         Line::from("  - / +            volume down / up"),
         Line::from("  v / V            cycle scope preset (saved)"),

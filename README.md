@@ -32,7 +32,9 @@ muse ~/Music    # explore a directory
 - Color themes (`t`): `midnight` plus pride-flag palettes (pride, trans, bi,
   lesbian, pan, nonbinary, ace) and animated modes — `prismatic` (rainbow
   borders), `trans flow` (slow trans-palette drift), `ripple` (glow pulsing
-  across panels), `snow` (falling snowflakes), `cmyk` (oscillating CMY borders)
+  across panels), `snow` (falling snowflakes), `cmyk` (oscillating CMY borders),
+  and `not gay` (hacker-green flames on navigation, a burning playhead, and a
+  Calcifer fireball in the corner) — plus static `straight` and retro `hacker`
 - Remembers the last scope preset and theme between launches (TOML at the
   platform config dir)
 

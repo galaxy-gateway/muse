@@ -20,6 +20,15 @@ pub enum Anim {
     Snow,
     /// Vivid CMY oscillation across borders.
     Cmyk,
+    /// Hacker-green flames: particles on navigation, a burning playhead, and a
+    /// Calcifer fireball in the top-right corner.
+    Flame,
+    /// A waving stars-and-stripes flag in the top-right corner.
+    Flag,
+    /// Retro CRT glitch: artifact bands, scatter noise, RGB-split borders.
+    Glitch,
+    /// Electric: lightning bolts, crackling borders, spark particles.
+    Electric,
 }
 
 #[derive(Clone, Copy)]
@@ -212,6 +221,71 @@ pub const THEMES: &[Theme] = &[
         playing: rgb(0xe5, 0x00, 0xe5),
         bg_sel: rgb(0x18, 0x18, 0x1c),
         anim: Anim::Cmyk,
+    },
+    Theme {
+        name: "straight",
+        accent: rgb(0xe0, 0x3b, 0x4a),
+        accent2: rgb(0x3b, 0x5b, 0xdb),
+        dir: rgb(0x6f, 0x8c, 0xff),
+        media: rgb(0xff, 0xff, 0xff),
+        dim: rgb(0x8a, 0x8a, 0xa0),
+        scope: rgb(0xe0, 0x3b, 0x4a),
+        wave: rgb(0x3b, 0x5b, 0xdb),
+        playing: rgb(0xff, 0xff, 0xff),
+        bg_sel: rgb(0x16, 0x1c, 0x38),
+        anim: Anim::Flag,
+    },
+    Theme {
+        name: "hacker",
+        accent: rgb(0x33, 0xff, 0x66),
+        accent2: rgb(0x00, 0xcc, 0x44),
+        dir: rgb(0x2a, 0xd1, 0x4f),
+        media: rgb(0xc8, 0xff, 0xce),
+        dim: rgb(0x2f, 0x7d, 0x44),
+        scope: rgb(0x33, 0xff, 0x66),
+        wave: rgb(0x1f, 0x9d, 0x3a),
+        playing: rgb(0xaa, 0xff, 0x66),
+        bg_sel: rgb(0x06, 0x20, 0x0c),
+        anim: Anim::None,
+    },
+    Theme {
+        name: "not gay",
+        accent: rgb(0x39, 0xff, 0x14),
+        accent2: rgb(0x00, 0xe6, 0x76),
+        dir: rgb(0x2a, 0xd1, 0x4f),
+        media: rgb(0xb8, 0xff, 0xc0),
+        dim: rgb(0x2f, 0x7d, 0x44),
+        scope: rgb(0x39, 0xff, 0x14),
+        wave: rgb(0x1f, 0x9d, 0x3a),
+        playing: rgb(0xaa, 0xff, 0x33),
+        bg_sel: rgb(0x06, 0x20, 0x0c),
+        anim: Anim::Flame,
+    },
+    Theme {
+        name: "glitch",
+        accent: rgb(0x33, 0xff, 0x66),
+        accent2: rgb(0x00, 0xff, 0xcc),
+        dir: rgb(0x2a, 0xd1, 0x4f),
+        media: rgb(0xb9, 0xff, 0xc8),
+        dim: rgb(0x2f, 0x7d, 0x44),
+        scope: rgb(0x33, 0xff, 0x88),
+        wave: rgb(0x1f, 0x9d, 0x3a),
+        playing: rgb(0x66, 0xff, 0xaa),
+        bg_sel: rgb(0x05, 0x1a, 0x10),
+        anim: Anim::Glitch,
+    },
+    Theme {
+        name: "electric",
+        accent: rgb(0x00, 0xea, 0xff),
+        accent2: rgb(0x7d, 0xf9, 0xff),
+        dir: rgb(0x4d, 0xc8, 0xff),
+        media: rgb(0xd6, 0xf6, 0xff),
+        dim: rgb(0x3a, 0x5a, 0x78),
+        scope: rgb(0x00, 0xea, 0xff),
+        wave: rgb(0x5a, 0x9a, 0xff),
+        playing: rgb(0xbf, 0xe9, 0xff),
+        bg_sel: rgb(0x0a, 0x10, 0x24),
+        anim: Anim::Electric,
     },
 ];
 

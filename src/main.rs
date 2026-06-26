@@ -9,7 +9,7 @@ mod model;
 mod ui;
 mod util;
 
-use std::io::{self, stdout};
+use std::io::{self, Write, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -48,6 +48,9 @@ fn main() -> Result<()> {
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    // Any-motion mouse tracking (1003) so hover works without a button held.
+    let _ = write!(stdout(), "\x1b[?1003h");
+    let _ = stdout().flush();
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     spawn_input(tx.clone());
@@ -56,6 +59,7 @@ fn main() -> Result<()> {
 
     let res = run(&mut terminal, &mut app, rx);
 
+    let _ = write!(terminal.backend_mut(), "\x1b[?1003l");
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),

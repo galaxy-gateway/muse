@@ -15,7 +15,7 @@ use souvlaki::{
 
 use crate::audio::{AudioEngine, TransportCmd};
 use crate::config::{
-    SCOPE_PRESETS, ScopePreset, Settings, THEMES, Theme, load_settings, save_settings,
+    Anim, SCOPE_PRESETS, ScopePreset, Settings, THEMES, Theme, load_settings, save_settings,
 };
 use crate::event::AppEvent;
 use crate::media::{Meta, Registry};
@@ -33,6 +33,18 @@ pub enum LoopMode {
     All,
     /// Repeat the current track.
     One,
+}
+
+/// One particle (flame ember / electric spark): float position + velocity,
+/// integrated each tick until it ages out or leaves the screen.
+pub struct Spark {
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub age: u16,
+    pub life: u16,
+    pub seed: u32,
 }
 
 impl LoopMode {
@@ -85,6 +97,17 @@ pub struct App {
     /// panel and the transport bar.
     pub wave_rect: Rect,
     pub transport_rect: Rect,
+    pub tree_rect: Rect,
+    pub scope_rect: Rect,
+    pub screen: Rect,
+    /// While a left-drag started on a seek bar, the rect being scrubbed.
+    seeking_rect: Option<Rect>,
+    /// Horizontal pan offset for the tree (mouse horizontal scroll).
+    pub tree_hscroll: u16,
+    /// Last mouse position, for hover highlighting of interactable parts.
+    pub hover: Option<(u16, u16)>,
+    /// Live particles (Flame embers / Electric sparks).
+    pub particles: Vec<Spark>,
     pub show_help: bool,
     /// Theme-picker modal: open flag, highlighted row, and the theme to restore
     /// on cancel.
@@ -145,6 +168,13 @@ impl App {
             index: Vec::new(),
             wave_rect: Rect::default(),
             transport_rect: Rect::default(),
+            tree_rect: Rect::default(),
+            scope_rect: Rect::default(),
+            screen: Rect::default(),
+            seeking_rect: None,
+            tree_hscroll: 0,
+            hover: None,
+            particles: Vec::new(),
             show_help: false,
             show_theme: false,
             theme_sel: theme_idx,
@@ -271,14 +301,17 @@ impl App {
                 self.scope_buf.copy_from_slice(self.engine.scope());
                 self.check_track_end();
                 self.sync_media_playback();
+                self.spawn_scope_particles();
+                self.update_particles();
                 self.frame = self.frame.wrapping_add(1);
             }
-            AppEvent::Wave(path, token, bins) => {
-                if token == self.wave_gen {
-                    self.wave_cache.insert(path.clone(), bins);
-                    if self.wave_pending.as_ref() == Some(&path) {
-                        self.wave_pending = None;
-                    }
+            AppEvent::Wave(path, _token, bins) => {
+                // Cache by path regardless of generation — bins are always
+                // correct for their path, and a now-playing request must not be
+                // dropped just because the tree selection moved on.
+                self.wave_cache.insert(path.clone(), bins);
+                if self.wave_pending.as_ref() == Some(&path) {
+                    self.wave_pending = None;
                 }
             }
             AppEvent::Index(files) => {
@@ -423,8 +456,129 @@ impl App {
     }
 
     fn select(&mut self, i: usize) {
+        let prev = self.list_state.selected();
         self.list_state.select(Some(i));
         self.on_selection_changed();
+        // Particles shoot opposite the move: moving down fires up, up fires down.
+        let dir = match prev {
+            Some(p) if i > p => -1.0, // moved down -> up
+            Some(p) if i < p => 1.0,  // moved up   -> down
+            _ => -1.0,
+        };
+        self.spawn_nav_particles(dir);
+    }
+
+    /// Whether this theme uses the particle system.
+    fn particle_theme(&self) -> bool {
+        matches!(self.theme.anim, Anim::Flame | Anim::Electric)
+    }
+
+    fn cap_particles(&mut self) {
+        if self.particles.len() > 500 {
+            let drop = self.particles.len() - 500;
+            self.particles.drain(0..drop);
+        }
+    }
+
+    /// Burst at the cursor row, travelling vertically in `dir` with x-jitter.
+    fn spawn_nav_particles(&mut self, dir: f32) {
+        if !self.particle_theme() {
+            return;
+        }
+        let r = self.tree_rect;
+        if r.width < 3 || r.height < 3 {
+            return;
+        }
+        let sel = self.list_state.selected().unwrap_or(0);
+        let vis = sel.saturating_sub(self.list_state.offset()) as u16;
+        let y = (r.y + 1 + vis).min(r.y + r.height - 2) as f32;
+        let base_x = (r.x + 1) as f32;
+        let span = r.width.saturating_sub(2).max(1) as u32;
+        for i in 0..18u32 {
+            let seed = crate::util::noise(self.frame as u32, i + sel as u32 * 7);
+            let vx = ((seed % 7) as f32 - 3.0) * 0.12;
+            let vy = dir * (0.4 + (seed % 3) as f32 * 0.18);
+            self.particles.push(Spark {
+                x: base_x + (seed % span) as f32,
+                y,
+                vx,
+                vy,
+                age: 0,
+                life: 9 + (seed % 8) as u16,
+                seed,
+            });
+        }
+        self.cap_particles();
+    }
+
+    /// Radial burst from a point (click): flame/spark embers, or a firework for
+    /// the flag theme.
+    fn spawn_radial(&mut self, cx: u16, cy: u16) {
+        if !self.particle_theme() && self.theme.anim != Anim::Flag {
+            return;
+        }
+        for i in 0..22u32 {
+            let seed = crate::util::noise(self.frame as u32 + i, (cx as u32) * 131 + cy as u32);
+            let ang = (i as f32 / 22.0) * std::f32::consts::TAU + (seed % 100) as f32 * 0.01;
+            let spd = 0.45 + (seed % 6) as f32 * 0.14;
+            self.particles.push(Spark {
+                x: cx as f32,
+                y: cy as f32,
+                vx: ang.cos() * spd,
+                vy: ang.sin() * spd,
+                age: 0,
+                life: 8 + (seed % 9) as u16,
+                seed,
+            });
+        }
+        self.cap_particles();
+    }
+
+    /// Shoot particles off the oscilloscope when it peaks loud.
+    fn spawn_scope_particles(&mut self) {
+        if !self.particle_theme() || self.frame % 2 != 0 {
+            return;
+        }
+        let r = self.scope_rect;
+        if r.width < 3 || r.height < 3 {
+            return;
+        }
+        let peak = self.scope_buf.iter().fold(0f32, |m, &s| m.max(s.abs()));
+        if peak < 0.08 {
+            return;
+        }
+        let n = (((peak - 0.08) * 12.0) as u32 + 1).min(6);
+        let span = (r.width - 2) as u32;
+        // Launch from the middle of the scope (where the trace sits), not the top.
+        let mid = (r.y + r.height / 2) as f32;
+        for i in 0..n {
+            let seed = crate::util::noise(self.frame as u32 + i, peak.to_bits());
+            self.particles.push(Spark {
+                x: (r.x + 1) as f32 + (seed % span) as f32,
+                y: mid + ((seed / 7 % 3) as f32 - 1.0),
+                vx: ((seed % 9) as f32 - 4.0) * 0.18,
+                vy: -(0.4 + (seed % 4) as f32 * 0.18), // upward off the scope
+                age: 0,
+                life: 8 + (seed % 8) as u16,
+                seed,
+            });
+        }
+        self.cap_particles();
+    }
+
+    /// Integrate particles each tick; cull when aged or off-screen.
+    fn update_particles(&mut self) {
+        if self.particles.is_empty() {
+            return;
+        }
+        let s = self.screen;
+        let (w, h) = (s.width as f32, s.height as f32);
+        self.particles.retain_mut(|p| {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.age += 1;
+            p.x >= 0.0 && p.x < w && p.y >= 0.0 && p.y < h && p.age < p.life
+        });
     }
 
     fn expand(&mut self) {
@@ -487,10 +641,15 @@ impl App {
             return;
         }
         self.engine.send(TransportCmd::Open(path.clone()));
-        self.now_playing = Some(path);
+        self.now_playing = Some(path.clone());
         // Open will flip the engine to playing; arm end-of-track detection.
         self.prev_playing = true;
         self.push_media_metadata();
+        // Ensure the now-playing waveform is computed even when playback was
+        // started by auto-advance / next-prev (no tree selection change).
+        if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
+            self.request_waveform(path);
+        }
     }
 
     /// Ordered media paths in the current view (filtered results, else the
@@ -529,22 +688,66 @@ impl App {
         self.play_path(list[idx as usize].clone());
     }
 
-    /// Left-click on the now-playing waveform or transport bar seeks the track
-    /// to the matching position.
+    /// Mouse handling: left-press on the waveform/transport seeks (and a left
+    /// drag scrubs); left-press on the tree selects the row and activates it
+    /// (toggle a folder, play a file).
     fn on_mouse(&mut self, m: MouseEvent) {
-        if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-            return;
-        }
-        let dur = self.engine.duration_secs();
-        if dur <= 0.0 {
-            return;
-        }
-        for rect in [self.wave_rect, self.transport_rect] {
-            if let Some(frac) = frac_in_rect(rect, m.column, m.row) {
-                self.engine.send(TransportCmd::SeekTo(frac * dur));
-                return;
+        let (col, row) = (m.column, m.row);
+        self.hover = Some((col, row));
+        match m.kind {
+            MouseEventKind::ScrollDown => self.move_cursor(3),
+            MouseEventKind::ScrollUp => self.move_cursor(-3),
+            MouseEventKind::ScrollRight => self.tree_hscroll = (self.tree_hscroll + 2).min(80),
+            MouseEventKind::ScrollLeft => self.tree_hscroll = self.tree_hscroll.saturating_sub(2),
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Every click throws a radial particle burst at the pointer.
+                self.spawn_radial(col, row);
+                // Seek bars take priority; start a scrub if pressed on one.
+                for rect in [self.wave_rect, self.transport_rect] {
+                    if frac_in_rect(rect, col, row).is_some() {
+                        self.seeking_rect = Some(rect);
+                        self.seek_to(frac_col(rect, col));
+                        return;
+                    }
+                }
+                // Otherwise, a click in the tree selects + activates that row.
+                if let Some(idx) = self.tree_row_at(col, row) {
+                    self.list_state.select(Some(idx));
+                    self.on_selection_changed();
+                    self.enter();
+                }
             }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(rect) = self.seeking_rect {
+                    self.seek_to(frac_col(rect, col));
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => self.seeking_rect = None,
+            _ => {}
         }
+    }
+
+    fn seek_to(&self, frac: f64) {
+        let dur = self.engine.duration_secs();
+        if dur > 0.0 {
+            self.engine.send(TransportCmd::SeekTo(frac * dur));
+        }
+    }
+
+    /// Visible-list index for a click at (col,row) inside the tree panel.
+    pub fn tree_row_at(&self, col: u16, row: u16) -> Option<usize> {
+        let r = self.tree_rect;
+        if r.width < 3 || r.height < 3 {
+            return None;
+        }
+        if col <= r.x || col >= r.x + r.width - 1 {
+            return None;
+        }
+        if row <= r.y || row >= r.y + r.height - 1 {
+            return None;
+        }
+        let idx = (row - (r.y + 1)) as usize + self.list_state.offset();
+        (idx < self.list_len()).then_some(idx)
     }
 
     /// Handle an OS media-key / now-playing control event.
@@ -748,4 +951,16 @@ fn frac_in_rect(r: Rect, col: u16, row: u16) -> Option<f64> {
     let left = r.x + 1;
     let span = (r.width - 2) as f64;
     Some(((col - left) as f64 / span).clamp(0.0, 1.0))
+}
+
+/// Fraction (0..1) of `r`'s inner width at column `col`, clamped — ignores the
+/// row, so a drag keeps scrubbing even if the pointer drifts off the bar.
+fn frac_col(r: Rect, col: u16) -> f64 {
+    if r.width < 3 {
+        return 0.0;
+    }
+    let left = r.x + 1;
+    let right = r.x + r.width - 2;
+    let c = col.clamp(left, right);
+    (c - left) as f64 / (r.width - 2) as f64
 }

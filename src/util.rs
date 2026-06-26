@@ -54,6 +54,17 @@ pub fn fuzzy_score(needle: &str, haystack: &str) -> Option<i32> {
     Some(score)
 }
 
+/// Cheap deterministic hash (two seeds -> pseudo-random u32). Used for flicker
+/// and particle jitter without an RNG dependency.
+pub fn noise(a: u32, b: u32) -> u32 {
+    let mut x = a
+        .wrapping_mul(374_761_393)
+        .wrapping_add(b.wrapping_mul(668_265_263));
+    x ^= x >> 13;
+    x = x.wrapping_mul(1_274_126_177);
+    x ^ (x >> 16)
+}
+
 /// Human-readable byte size, e.g. 4.2 MB, 512 KB, 900 B.
 pub fn fmt_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
