@@ -69,6 +69,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  ⏎                expand dir or play file"),
         Line::from("  space            play / pause"),
         Line::from("  n / p            next / previous track"),
+        Line::from("  u                back to previous song (resumes position)"),
         Line::from("  r                loop mode (off / all / one)"),
         Line::from("  b                gapless playback on / off (saved)"),
         Line::from("  y / Y or ⧉       copy selection / now-playing path"),

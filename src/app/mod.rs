@@ -76,6 +76,9 @@ pub struct App {
     pub wave_gen: u64,
 
     pub now_playing: Option<PathBuf>,
+    /// The track playing before the current one, with its playhead at the moment
+    /// we switched away — lets `u` jump back and resume (undo an accidental click).
+    pub(super) prev_track: Option<(PathBuf, f64)>,
     pub loop_mode: LoopMode,
     /// Held-nav acceleration: the last j/k/↑/↓ direction + when it fired, and how
     /// many consecutive same-direction repeats have stacked. Drives `move_cursor_accel`.
@@ -172,6 +175,7 @@ impl App {
             wave_pending: None,
             wave_gen: 0,
             now_playing: None,
+            prev_track: None,
             loop_mode: LoopMode::Off,
             nav_last: None,
             nav_streak: 0,

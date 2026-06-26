@@ -3,8 +3,8 @@
 > **Stack:** raw-http | none | unknown | rust
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
-> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,000 tokens. **Saves ~7,400 tokens per conversation.**
-> **Last scanned:** 2026-06-26 22:14 — re-run after significant changes
+> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,000 tokens. **Saves ~7,300 tokens per conversation.**
+> **Last scanned:** 2026-06-26 22:32 — re-run after significant changes
 
 ---
 
@@ -53,6 +53,19 @@
 - `src/effects/electric.rs` ← `src/effects/mod.rs`
 - `src/effects/flag.rs` ← `src/effects/mod.rs`
 - `src/effects/flame.rs` ← `src/effects/mod.rs`
+
+---
+
+# Git Hooks
+
+> **Note for agents:** These hooks fire automatically on git operations and will block the operation if they fail.
+
+## `pre-commit` — raw git hook
+
+- **npx**: `npx codesight --wiki -o .codesight`
+- **git**: `git add .codesight/`
+
+_Source: .git/hooks/pre-commit_
 
 ---
 

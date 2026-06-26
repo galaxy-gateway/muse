@@ -23,8 +23,28 @@ impl App {
         if !self.registry.is_supported(&path) {
             return;
         }
+        // Remember the outgoing track + playhead so `u` can return to it (e.g.
+        // after an accidental click on a different song) and resume where it
+        // left off. Only on a real switch, not a same-track restart.
+        let outgoing = match &self.now_playing {
+            Some(cur) if cur != &path => Some(cur.clone()),
+            _ => None,
+        };
+        if let Some(cur) = outgoing {
+            self.prev_track = Some((cur, self.engine.position_secs()));
+        }
         self.engine.send(TransportCmd::Open(path.clone()));
         self.begin_now_playing(path);
+    }
+
+    /// Return to the previously-playing track and resume at the playhead it had
+    /// when we left it. `play_path` records the current track as the new
+    /// previous, so `u` toggles back and forth between the two.
+    pub(super) fn play_previous_track(&mut self) {
+        if let Some((path, pos)) = self.prev_track.take() {
+            self.play_path(path);
+            self.engine.send(TransportCmd::SeekTo(pos));
+        }
     }
 
     /// The decode thread spliced into the preloaded next track at a gapless
