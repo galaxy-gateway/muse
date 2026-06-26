@@ -6,15 +6,30 @@ DIR ?= .
 FILE ?=
 BIN := muse
 
-# Cross-compile (uses cargo-zigbuild; zig bundles the C toolchain + libs)
-WIN_TARGET   := x86_64-pc-windows-gnu
-LINUX_TARGET := x86_64-unknown-linux-gnu
-DIST         := dist
+DIST := dist
+
+# Cross-compile targets (uses cargo-zigbuild; zig bundles the C toolchain).
+WIN_X64 := x86_64-pc-windows-gnu
+WIN_ARM := aarch64-pc-windows-gnullvm
+MAC_X64 := x86_64-apple-darwin
+MAC_ARM := aarch64-apple-darwin
+LNX_X64 := x86_64-unknown-linux-gnu
+LNX_ARM := aarch64-unknown-linux-gnu
+
+# Canned build recipe. $(1)=rust triple, $(2)=output name, $(3)=builder.
+# Windows targets get a .exe source suffix automatically.
+define cross_build
+	@mkdir -p $(DIST)
+	$(if $(filter zig,$(3)),cargo zigbuild,cargo build) --release --target $(1)
+	cp target/$(1)/release/$(BIN)$(if $(findstring windows,$(1)),.exe) $(DIST)/$(2)
+	@echo "  -> $(DIST)/$(2)"
+endef
 
 .DEFAULT_GOAL := help
 
 .PHONY: help build release run probe test check fmt fmt-check lint audit \
-        clean install uninstall tag cross-setup windows linux dist
+        clean install uninstall tag cross-setup build-all \
+        win-x64 win-arm mac-x64 mac-arm linux-x64 linux-arm
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} \
@@ -26,8 +41,11 @@ help: ## Show this help
 build: ## Debug build
 	cargo build
 
-release: ## Optimized release build
+release: ## Optimized native build -> dist/muse
 	cargo build --release
+	@mkdir -p $(DIST)
+	cp target/release/$(BIN) $(DIST)/$(BIN)
+	@echo "  -> $(DIST)/$(BIN)"
 
 clean: ## Remove build artifacts
 	cargo clean
@@ -59,28 +77,42 @@ lint: ## Clippy with warnings as errors
 audit: ## Scan dependencies for security advisories (needs cargo-audit)
 	cargo audit
 
-##@ Cross-compile
-cross-setup: ## Install cross-compile deps (cargo-zigbuild + rust targets; needs zig)
+##@ Cross-compile (all outputs land in dist/)
+cross-setup: ## Install cargo-zigbuild + all rust targets (needs zig)
 	@command -v zig >/dev/null || { echo "zig not found — brew install zig"; exit 1; }
 	cargo install cargo-zigbuild
-	rustup target add $(WIN_TARGET) $(LINUX_TARGET)
+	rustup target add $(WIN_X64) $(WIN_ARM) $(MAC_X64) $(MAC_ARM) $(LNX_X64) $(LNX_ARM)
 
-windows: ## Cross-build a Windows x64 exe -> $(DIST)/muse-windows-x64.exe
-	cargo zigbuild --release --target $(WIN_TARGET)
+mac-arm: ## macOS arm64   -> dist/muse-macos-aarch64
+	$(call cross_build,$(MAC_ARM),$(BIN)-macos-aarch64,cargo)
+
+mac-x64: ## macOS x86_64  -> dist/muse-macos-x86_64
+	$(call cross_build,$(MAC_X64),$(BIN)-macos-x86_64,cargo)
+
+win-x64: ## Windows x86_64 -> dist/muse-windows-x86_64.exe
+	$(call cross_build,$(WIN_X64),$(BIN)-windows-x86_64.exe,zig)
+
+win-arm: ## Windows arm64  -> dist/muse-windows-aarch64.exe
+	$(call cross_build,$(WIN_ARM),$(BIN)-windows-aarch64.exe,zig)
+
+# Linux needs ALSA (libasound) dev libs for the target — present on a Linux host
+# but not on macOS, so these build on Linux / in CI (apt install libasound2-dev),
+# not by cross-compiling from a Mac.
+linux-x64: ## Linux x86_64 -> dist/muse-linux-x86_64 (Linux/CI host)
+	$(call cross_build,$(LNX_X64),$(BIN)-linux-x86_64,zig)
+
+linux-arm: ## Linux arm64  -> dist/muse-linux-aarch64 (Linux/CI host)
+	$(call cross_build,$(LNX_ARM),$(BIN)-linux-aarch64,zig)
+
+build-all: ## Build every OS/arch into dist/ (continues past failures)
 	@mkdir -p $(DIST)
-	cp target/$(WIN_TARGET)/release/$(BIN).exe $(DIST)/$(BIN)-windows-x64.exe
-	@echo "built $(DIST)/$(BIN)-windows-x64.exe"
-
-# Linux needs ALSA (libasound) dev libs for the *target*. That ships with a
-# Linux host but not a macOS one, so this works when run ON Linux (or in CI /
-# Docker with libasound2-dev installed). From macOS it will fail at link.
-linux: ## Build a Linux x64 binary -> $(DIST)/muse-linux-x64 (run on Linux/CI)
-	cargo zigbuild --release --target $(LINUX_TARGET)
-	@mkdir -p $(DIST)
-	cp target/$(LINUX_TARGET)/release/$(BIN) $(DIST)/$(BIN)-linux-x64
-	@echo "built $(DIST)/$(BIN)-linux-x64"
-
-dist: windows linux ## Build both Windows and Linux binaries into $(DIST)/
+	-@$(MAKE) --no-print-directory mac-arm
+	-@$(MAKE) --no-print-directory mac-x64
+	-@$(MAKE) --no-print-directory win-x64
+	-@$(MAKE) --no-print-directory win-arm
+	-@$(MAKE) --no-print-directory linux-x64
+	-@$(MAKE) --no-print-directory linux-arm
+	@echo "=== $(DIST) ==="; ls -1 $(DIST)
 
 ##@ Install
 install: release ## Install the binary to ~/.cargo/bin
