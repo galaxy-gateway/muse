@@ -9,9 +9,9 @@ use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Context, Line as CLine, Points};
 
-use crate::config::{ScopeMode, ScopeStyle, Theme};
+use crate::config::{Anim, ScopeMode, ScopeStyle, THEMES, Theme};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, Gauge, List, ListItem, Padding, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
 
 use crate::app::App;
@@ -34,13 +34,100 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(cols[0]);
 
+    // Record click-to-seek hit rects (must mirror draw_inspector's split below).
+    let inspector = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(5),
+            Constraint::Min(5),
+            Constraint::Length(9),
+        ])
+        .split(cols[1]);
+    app.wave_rect = inspector[1];
+    app.transport_rect = root[1];
+
     draw_selection(f, app, left[0]);
     draw_tree(f, app, left[1]);
     draw_inspector(f, app, cols[1]);
     draw_transport(f, app, root[1]);
 
+    if app.theme.anim == Anim::Snow {
+        draw_snow(f, app);
+    }
+    if app.show_theme {
+        draw_theme_modal(f, app);
+    }
     if app.show_help {
         draw_help(f, app);
+    }
+}
+
+/// Theme picker: list of themes with color swatches; the highlighted row is
+/// live-previewed in the rest of the UI. Navigated with j/k, applied with Enter.
+fn draw_theme_modal(f: &mut Frame, app: &App) {
+    let t = &app.theme;
+    let area = centered(46, 80, f.area());
+    f.render_widget(Clear, area);
+    let items: Vec<ListItem> = THEMES
+        .iter()
+        .map(|th| {
+            let swatch = |c| Span::styled("██", Style::default().fg(c));
+            let tag = if th.anim == Anim::None { "  " } else { "✦ " };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{:<11}", th.name), Style::default().fg(th.media)),
+                Span::styled(tag, Style::default().fg(t.dim)),
+                swatch(th.accent),
+                swatch(th.accent2),
+                swatch(th.scope),
+                swatch(th.playing),
+            ]))
+        })
+        .collect();
+    let list = List::new(items)
+        .block(
+            panel_hint(
+                "theme",
+                border(t, app.frame, t.accent2, 0.14),
+                "↑↓ pick · ⏎ apply · esc cancel",
+                t.dim,
+            )
+            .padding(Padding::horizontal(1)),
+        )
+        .highlight_style(Style::default().bg(t.bg_sel).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▌");
+    let mut state = ListState::default();
+    state.select(Some(app.theme_sel));
+    f.render_stateful_widget(list, area, &mut state);
+}
+
+/// Deterministic falling-snow overlay drawn over the whole window. Each flake's
+/// column, glyph, fall speed and sway derive from its index + the frame counter,
+/// so it animates without any RNG or persistent state.
+fn draw_snow(f: &mut Frame, app: &App) {
+    const GLYPHS: [char; 5] = ['❄', '❅', '*', '·', '✦'];
+    let area = f.area();
+    let (w, h) = (area.width as u32, area.height as u32);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let buf = f.buffer_mut();
+    let frame = app.frame;
+    let flakes = (w / 2).max(8);
+    for k in 0..flakes {
+        let col = k.wrapping_mul(2_654_435_761) % w;
+        let phase = k.wrapping_mul(40_503) % h;
+        let div = 3 + (k % 4); // fall speed: one cell every 3..6 frames
+        let y = ((frame as u32 / div) + phase) % h;
+        let sway = ((frame as i64) / 9 + k as i64).rem_euclid(3) as i32 - 1;
+        let x = (col as i32 + sway).clamp(0, w as i32 - 1) as u32;
+        let shade = match k % 3 {
+            0 => Color::Rgb(0xff, 0xff, 0xff),
+            1 => Color::Rgb(0xcf, 0xe4, 0xff),
+            _ => Color::Rgb(0x9e, 0xb8, 0xd8),
+        };
+        let cell = &mut buf[(area.x + x as u16, area.y + y as u16)];
+        cell.set_char(GLYPHS[k as usize % GLYPHS.len()]);
+        cell.set_fg(shade);
     }
 }
 
@@ -83,13 +170,59 @@ fn hue(phase: f64) -> Color {
     Color::Rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
 
-/// Border accent for a panel: the theme's `base`, or — in prismatic mode — a
-/// time-shifting rainbow hue, offset per panel so they spread across the wheel.
-fn border(theme: &Theme, frame: u64, base: Color, offset: f64) -> Color {
-    if theme.prismatic {
-        hue(frame as f64 * 0.012 + offset)
+fn rgb_of(c: Color) -> (f64, f64, f64) {
+    if let Color::Rgb(r, g, b) = c {
+        (r as f64, g as f64, b as f64)
     } else {
-        base
+        (200.0, 200.0, 200.0)
+    }
+}
+
+/// Interpolate around a looping list of color stops at `phase` (wraps at 1.0).
+fn gradient(stops: &[(f64, f64, f64)], phase: f64) -> Color {
+    let n = stops.len();
+    let p = phase.rem_euclid(1.0) * n as f64;
+    let i = p.floor() as usize % n;
+    let frac = p - p.floor();
+    let a = stops[i];
+    let b = stops[(i + 1) % n];
+    Color::Rgb(
+        (a.0 + (b.0 - a.0) * frac) as u8,
+        (a.1 + (b.1 - a.1) * frac) as u8,
+        (a.2 + (b.2 - a.2) * frac) as u8,
+    )
+}
+
+/// Pulse `base`'s brightness; `offset` phase-shifts so the pulse ripples panel
+/// to panel.
+fn glow(base: Color, frame: u64, offset: f64) -> Color {
+    let (r, g, b) = rgb_of(base);
+    let t = frame as f64 * 0.025 - offset * 1.4;
+    let f = 0.35 + 0.65 * (0.5 + 0.5 * (t * std::f64::consts::TAU).sin());
+    Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
+}
+
+const TRANS_STOPS: &[(f64, f64, f64)] = &[
+    (91.0, 206.0, 250.0),
+    (245.0, 169.0, 184.0),
+    (255.0, 255.0, 255.0),
+    (245.0, 169.0, 184.0),
+];
+const CMY_STOPS: &[(f64, f64, f64)] = &[
+    (0.0, 229.0, 229.0),
+    (229.0, 0.0, 229.0),
+    (229.0, 229.0, 0.0),
+];
+
+/// Border accent for a panel: the theme's static `base`, or an animated color
+/// per the theme's `anim`. `offset` spreads the animation across panels.
+fn border(theme: &Theme, frame: u64, base: Color, offset: f64) -> Color {
+    match theme.anim {
+        Anim::None | Anim::Snow => base,
+        Anim::Prismatic => hue(frame as f64 * 0.012 + offset),
+        Anim::TransSlow => gradient(TRANS_STOPS, frame as f64 * 0.0035 + offset * 0.25),
+        Anim::Ripple => glow(base, frame, offset),
+        Anim::Cmyk => gradient(CMY_STOPS, frame as f64 * 0.006 + offset),
     }
 }
 
@@ -686,7 +819,7 @@ fn draw_transport(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help(f: &mut Frame, app: &App) {
     let t = &app.theme;
-    let area = centered(60, 50, f.area());
+    let area = centered(62, 75, f.area());
     f.render_widget(Clear, area);
     let lines = vec![
         Line::from(Span::styled(
@@ -703,10 +836,13 @@ fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  n / p            next / previous track"),
         Line::from("  r                loop mode (off / all / one)"),
         Line::from("  , / .            seek -5s / +5s"),
+        Line::from("  shift ← / →      scrub playhead -1s / +1s"),
+        Line::from("  click wave/bar   seek to that position"),
+        Line::from("  media keys       play/pause/next/prev (OS)"),
         Line::from("  - / +            volume down / up"),
         Line::from("  v / V            cycle scope preset (saved)"),
         Line::from(format!(
-            "  t / T            cycle color theme — {} (saved)",
+            "  t                theme picker — {} (saved)",
             t.name
         )),
         Line::from("  /                fuzzy find (⏎ apply · esc reset)"),

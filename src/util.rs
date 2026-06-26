@@ -10,19 +10,17 @@ pub fn fmt_time(secs: f64) -> String {
     format!("{m}:{s:02}")
 }
 
-/// `M:SS.ffffffffffff` — seconds carried to 12 fractional digits (picoseconds),
-/// for the live now-playing readout. The low digits only update at the audio
-/// frame rate, but the fractional part visibly ticks every redraw.
+/// `M:SS.mmm` — seconds with millisecond precision, for the live now-playing
+/// readout. The fractional part ticks each redraw as playback advances.
 pub fn fmt_time_precise(secs: f64) -> String {
     if !secs.is_finite() || secs < 0.0 {
-        return "0:00.000000000000".into();
+        return "0:00.000".into();
     }
     let total = secs as u64;
     let m = total / 60;
     let s = total % 60;
-    let frac = secs - total as f64; // 0.0..1.0
-    let pico = (frac * 1e12).round() as u64; // picoseconds within the second
-    format!("{m}:{s:02}.{pico:012}")
+    let ms = (((secs - total as f64) * 1000.0).round() as u64).min(999); // 0..=999
+    format!("{m}:{s:02}.{ms:03}")
 }
 
 /// Case-insensitive subsequence fuzzy match. `Some(score)` if every char of

@@ -24,11 +24,15 @@ muse ~/Music    # explore a directory
   `now playing` panel tracks the engine's current track
 - Read-only metadata panel (title / artist / album / genre / codec) via lofty
 - Transport bar: play/pause, seek, volume, progress
+- Click the now-playing waveform or transport bar to seek; `shift`+`←`/`→`
+  scrubs the playhead
+- OS media keys / now-playing integration (play/pause/next/prev) via souvlaki
 - Fuzzy finder (`/`): searches a background-built index of every track (never
   blocks the UI); flat ranked results, `⏎` applies, `esc` resets to the tree
 - Color themes (`t`): `midnight` plus pride-flag palettes (pride, trans, bi,
-  lesbian, pan, nonbinary, ace) and a `prismatic` mode with rainbow borders that
-  shift over time
+  lesbian, pan, nonbinary, ace) and animated modes — `prismatic` (rainbow
+  borders), `trans flow` (slow trans-palette drift), `ripple` (glow pulsing
+  across panels), `snow` (falling snowflakes), `cmyk` (oscillating CMY borders)
 - Remembers the last scope preset and theme between launches (TOML at the
   platform config dir)
 
@@ -46,6 +50,8 @@ preview + compare can be added later without touching the core.
 | `⏎` | expand dir or play file |
 | `space` / `p` | play / pause |
 | `,` / `.` | seek −5s / +5s |
+| `shift`+`←`/`→` | scrub playhead ∓1s |
+| click waveform/transport | seek to position |
 | `-` / `+` | volume |
 | `v` / `V` | cycle scope preset (forward / back) |
 | `t` / `T` | cycle color theme (forward / back) |

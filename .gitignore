@@ -1,3 +1,5 @@
 /target
+/dist
+/*.exe
 **/*.rs.bk
 .DS_Store

@@ -9,11 +9,14 @@ use crossbeam_channel::Sender;
 
 pub enum AppEvent {
     Input(crossterm::event::KeyEvent),
+    Mouse(crossterm::event::MouseEvent),
     Tick,
     /// Background waveform result: (path, generation token, bins).
     Wave(PathBuf, u64, Vec<(f32, f32)>),
     /// Full recursive media-file index for fuzzy filtering (built off-thread).
     Index(Vec<PathBuf>),
+    /// OS media-key / now-playing control event (souvlaki).
+    Media(souvlaki::MediaControlEvent),
 }
 
 /// Walk the whole tree once in the background and post every supported media
@@ -40,12 +43,21 @@ pub fn spawn_index(root: PathBuf, tx: Sender<AppEvent>) {
 pub fn spawn_input(tx: Sender<AppEvent>) {
     thread::spawn(move || {
         loop {
-            if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
-                if key.kind == crossterm::event::KeyEventKind::Press
-                    && tx.send(AppEvent::Input(key)).is_err()
-                {
-                    break;
+            match crossterm::event::read() {
+                Ok(crossterm::event::Event::Key(key)) => {
+                    if key.kind == crossterm::event::KeyEventKind::Press
+                        && tx.send(AppEvent::Input(key)).is_err()
+                    {
+                        break;
+                    }
                 }
+                Ok(crossterm::event::Event::Mouse(m)) => {
+                    if tx.send(AppEvent::Mouse(m)).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
             }
         }
     });

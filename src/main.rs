@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossbeam_channel::unbounded;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -46,7 +47,7 @@ fn main() -> Result<()> {
     let mut app = App::new(&dir, tx.clone())?;
 
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen)?;
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     spawn_input(tx.clone());
@@ -56,7 +57,11 @@ fn main() -> Result<()> {
     let res = run(&mut terminal, &mut app, rx);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     res
 }

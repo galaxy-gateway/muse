@@ -5,6 +5,23 @@ use std::path::PathBuf;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
+/// Per-theme animation applied while rendering (mostly to panel borders, plus
+/// the snow overlay). `None` is fully static.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Anim {
+    None,
+    /// Borders shift through the full rainbow.
+    Prismatic,
+    /// Borders drift slowly through the trans-flag palette.
+    TransSlow,
+    /// Borders pulse/glow, the pulse rippling across panels.
+    Ripple,
+    /// Snowflakes fall over the whole window.
+    Snow,
+    /// Vivid CMY oscillation across borders.
+    Cmyk,
+}
+
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub name: &'static str,
@@ -17,8 +34,7 @@ pub struct Theme {
     pub wave: Color,
     pub playing: Color,
     pub bg_sel: Color,
-    /// Animate every panel border through a shifting rainbow.
-    pub prismatic: bool,
+    pub anim: Anim,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
@@ -39,7 +55,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x6a, 0x84, 0xc4),
         playing: rgb(0xff, 0xb8, 0x6c),
         bg_sel: rgb(0x2a, 0x2e, 0x42),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "pride",
@@ -52,7 +68,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5d, 0x8c, 0xff),
         playing: rgb(0xff, 0x8c, 0x00),
         bg_sel: rgb(0x24, 0x1b, 0x2f),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "trans",
@@ -65,7 +81,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5b, 0xce, 0xfa),
         playing: rgb(0xf5, 0xa9, 0xb8),
         bg_sel: rgb(0x1b, 0x26, 0x30),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "bi",
@@ -78,7 +94,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x5d, 0x6c, 0xff),
         playing: rgb(0xff, 0x4f, 0x9b),
         bg_sel: rgb(0x1e, 0x1a, 0x2e),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "lesbian",
@@ -91,7 +107,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0xff, 0x9e, 0xc4),
         playing: rgb(0xff, 0x5e, 0x8a),
         bg_sel: rgb(0x2a, 0x1c, 0x1c),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "pan",
@@ -104,7 +120,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x21, 0xb1, 0xff),
         playing: rgb(0xff, 0x21, 0x8c),
         bg_sel: rgb(0x22, 0x18, 0x26),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "nonbinary",
@@ -117,7 +133,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x9c, 0x59, 0xd1),
         playing: rgb(0xd6, 0xa8, 0xff),
         bg_sel: rgb(0x23, 0x20, 0x26),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "ace",
@@ -130,7 +146,7 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x8a, 0x8a, 0x8a),
         playing: rgb(0xd0, 0xa0, 0xff),
         bg_sel: rgb(0x1c, 0x1c, 0x20),
-        prismatic: false,
+        anim: Anim::None,
     },
     Theme {
         name: "prismatic",
@@ -143,7 +159,59 @@ pub const THEMES: &[Theme] = &[
         wave: rgb(0x6a, 0x84, 0xc4),
         playing: rgb(0xff, 0xb8, 0x6c),
         bg_sel: rgb(0x24, 0x28, 0x3b),
-        prismatic: true,
+        anim: Anim::Prismatic,
+    },
+    Theme {
+        name: "trans flow",
+        accent: rgb(0x5b, 0xce, 0xfa),
+        accent2: rgb(0xf5, 0xa9, 0xb8),
+        dir: rgb(0x9a, 0xd8, 0xf0),
+        media: rgb(0xff, 0xff, 0xff),
+        dim: rgb(0x7d, 0x8a, 0xa0),
+        scope: rgb(0xf5, 0xa9, 0xb8),
+        wave: rgb(0x5b, 0xce, 0xfa),
+        playing: rgb(0xf5, 0xa9, 0xb8),
+        bg_sel: rgb(0x1b, 0x26, 0x30),
+        anim: Anim::TransSlow,
+    },
+    Theme {
+        name: "ripple",
+        accent: rgb(0x3a, 0xe0, 0xd0),
+        accent2: rgb(0x4d, 0xc8, 0xff),
+        dir: rgb(0x4d, 0xc8, 0xff),
+        media: rgb(0xd8, 0xf0, 0xf5),
+        dim: rgb(0x5a, 0x77, 0x82),
+        scope: rgb(0x3a, 0xe0, 0xd0),
+        wave: rgb(0x4d, 0xc8, 0xff),
+        playing: rgb(0x8a, 0xf0, 0xe0),
+        bg_sel: rgb(0x12, 0x22, 0x26),
+        anim: Anim::Ripple,
+    },
+    Theme {
+        name: "snow",
+        accent: rgb(0xcf, 0xe4, 0xff),
+        accent2: rgb(0x9e, 0xc4, 0xe8),
+        dir: rgb(0x8f, 0xb6, 0xde),
+        media: rgb(0xe8, 0xf2, 0xff),
+        dim: rgb(0x5c, 0x6b, 0x80),
+        scope: rgb(0xbf, 0xe0, 0xff),
+        wave: rgb(0x7d, 0x9c, 0xc4),
+        playing: rgb(0xe8, 0xf2, 0xff),
+        bg_sel: rgb(0x16, 0x1d, 0x2c),
+        anim: Anim::Snow,
+    },
+    Theme {
+        name: "cmyk",
+        accent: rgb(0x00, 0xe5, 0xe5),
+        accent2: rgb(0xe5, 0x00, 0xe5),
+        dir: rgb(0xe5, 0xe5, 0x00),
+        media: rgb(0xf2, 0xf2, 0xf2),
+        dim: rgb(0x6a, 0x6a, 0x6a),
+        scope: rgb(0xe5, 0xe5, 0x00),
+        wave: rgb(0x00, 0xe5, 0xe5),
+        playing: rgb(0xe5, 0x00, 0xe5),
+        bg_sel: rgb(0x18, 0x18, 0x1c),
+        anim: Anim::Cmyk,
     },
 ];
 

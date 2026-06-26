@@ -31,6 +31,8 @@ pub enum TransportCmd {
     #[allow(dead_code)]
     Play,
     SeekRel(f64),
+    /// Seek to an absolute position in seconds.
+    SeekTo(f64),
     VolRel(f32),
 }
 
@@ -226,6 +228,13 @@ fn decode_loop(
                     if let Some(a) = &audio {
                         let delta = (secs * device_sr as f64) as i64;
                         let nc = (cursor as i64 + delta).clamp(0, a.frames() as i64);
+                        cursor = nc as usize;
+                        pos_frames.store(cursor as u64, Ordering::Relaxed);
+                    }
+                }
+                TransportCmd::SeekTo(secs) => {
+                    if let Some(a) = &audio {
+                        let nc = (secs * device_sr as f64).clamp(0.0, a.frames() as f64);
                         cursor = nc as usize;
                         pos_frames.store(cursor as u64, Ordering::Relaxed);
                     }

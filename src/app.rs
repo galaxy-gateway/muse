@@ -6,8 +6,12 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use crossbeam_channel::Sender;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
+use souvlaki::{
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, PlatformConfig, SeekDirection,
+};
 
 use crate::audio::{AudioEngine, TransportCmd};
 use crate::config::{
@@ -77,8 +81,22 @@ pub struct App {
     pub filtered: Vec<PathBuf>,
     /// Full background-built media-file index searched by the fuzzy filter.
     pub index: Vec<PathBuf>,
+    /// Click-to-seek hit rects, written each render: the now-playing waveform
+    /// panel and the transport bar.
+    pub wave_rect: Rect,
+    pub transport_rect: Rect,
     pub show_help: bool,
+    /// Theme-picker modal: open flag, highlighted row, and the theme to restore
+    /// on cancel.
+    pub show_theme: bool,
+    pub theme_sel: usize,
+    theme_prev: usize,
     pub should_quit: bool,
+
+    /// OS media-key integration (now-playing controls). `None` if unavailable.
+    media: Option<MediaControls>,
+    /// Last play-state pushed to the OS, to avoid redundant updates.
+    media_playing: bool,
 
     tx: Sender<AppEvent>,
 }
@@ -125,7 +143,14 @@ impl App {
             filtering: false,
             filtered: Vec::new(),
             index: Vec::new(),
+            wave_rect: Rect::default(),
+            transport_rect: Rect::default(),
             show_help: false,
+            show_theme: false,
+            theme_sel: theme_idx,
+            theme_prev: theme_idx,
+            media: init_media(&tx),
+            media_playing: false,
             should_quit: false,
             tx,
         };
@@ -143,11 +168,51 @@ impl App {
         self.persist();
     }
 
-    fn cycle_theme(&mut self, delta: i32) {
+    fn open_theme_picker(&mut self) {
+        self.show_theme = true;
+        self.theme_prev = self.theme_idx;
+        self.theme_sel = self.theme_idx;
+    }
+
+    /// Move the highlight (wrapping) and live-preview that theme.
+    fn theme_move(&mut self, delta: i32) {
         let n = THEMES.len() as i32;
-        self.theme_idx = (((self.theme_idx as i32 + delta) % n + n) % n) as usize;
+        self.theme_sel = (((self.theme_sel as i32 + delta) % n + n) % n) as usize;
+        self.apply_preview();
+    }
+
+    fn theme_jump(&mut self, i: usize) {
+        self.theme_sel = i.min(THEMES.len() - 1);
+        self.apply_preview();
+    }
+
+    fn apply_preview(&mut self) {
+        self.theme_idx = self.theme_sel;
         self.theme = THEMES[self.theme_idx];
+    }
+
+    fn theme_confirm(&mut self) {
+        self.apply_preview();
+        self.show_theme = false;
         self.persist();
+    }
+
+    fn theme_cancel(&mut self) {
+        self.theme_idx = self.theme_prev;
+        self.theme = THEMES[self.theme_idx];
+        self.show_theme = false;
+    }
+
+    fn theme_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.theme_move(1),
+            KeyCode::Char('k') | KeyCode::Up => self.theme_move(-1),
+            KeyCode::Char('g') | KeyCode::Home => self.theme_jump(0),
+            KeyCode::Char('G') | KeyCode::End => self.theme_jump(THEMES.len() - 1),
+            KeyCode::Enter => self.theme_confirm(),
+            KeyCode::Esc | KeyCode::Char('q') => self.theme_cancel(),
+            _ => {}
+        }
     }
 
     fn persist(&self) {
@@ -200,9 +265,12 @@ impl App {
     pub fn handle(&mut self, ev: AppEvent) {
         match ev {
             AppEvent::Input(key) => self.on_key(key),
+            AppEvent::Mouse(m) => self.on_mouse(m),
+            AppEvent::Media(e) => self.on_media(e),
             AppEvent::Tick => {
                 self.scope_buf.copy_from_slice(self.engine.scope());
                 self.check_track_end();
+                self.sync_media_playback();
                 self.frame = self.frame.wrapping_add(1);
             }
             AppEvent::Wave(path, token, bins) => {
@@ -234,6 +302,10 @@ impl App {
             }
             return;
         }
+        if self.show_theme {
+            self.theme_key(key);
+            return;
+        }
         // Esc in normal mode clears an applied filter, restoring the tree view.
         if key.code == KeyCode::Esc && self.filter_active() {
             self.clear_filter();
@@ -258,6 +330,9 @@ impl App {
             (KeyCode::Char('G'), _) | (KeyCode::End, _) => {
                 self.select(self.list_len().saturating_sub(1))
             }
+            // Shift+arrows scrub the playhead (fine seek); plain arrows nav tree.
+            (KeyCode::Left, KeyModifiers::SHIFT) => self.engine.send(TransportCmd::SeekRel(-1.0)),
+            (KeyCode::Right, KeyModifiers::SHIFT) => self.engine.send(TransportCmd::SeekRel(1.0)),
             (KeyCode::Char('h'), _) | (KeyCode::Left, _) => self.collapse_or_parent(),
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => self.expand(),
             (KeyCode::Enter, _) => self.enter(),
@@ -273,8 +348,7 @@ impl App {
             (KeyCode::Char('-'), _) => self.engine.send(TransportCmd::VolRel(-0.05)),
             (KeyCode::Char('v'), _) => self.cycle_scope(1),
             (KeyCode::Char('V'), _) => self.cycle_scope(-1),
-            (KeyCode::Char('t'), _) => self.cycle_theme(1),
-            (KeyCode::Char('T'), _) => self.cycle_theme(-1),
+            (KeyCode::Char('t'), _) => self.open_theme_picker(),
             _ => {}
         }
     }
@@ -416,6 +490,7 @@ impl App {
         self.now_playing = Some(path);
         // Open will flip the engine to playing; arm end-of-track detection.
         self.prev_playing = true;
+        self.push_media_metadata();
     }
 
     /// Ordered media paths in the current view (filtered results, else the
@@ -452,6 +527,104 @@ impl App {
             None => 0,
         };
         self.play_path(list[idx as usize].clone());
+    }
+
+    /// Left-click on the now-playing waveform or transport bar seeks the track
+    /// to the matching position.
+    fn on_mouse(&mut self, m: MouseEvent) {
+        if !matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let dur = self.engine.duration_secs();
+        if dur <= 0.0 {
+            return;
+        }
+        for rect in [self.wave_rect, self.transport_rect] {
+            if let Some(frac) = frac_in_rect(rect, m.column, m.row) {
+                self.engine.send(TransportCmd::SeekTo(frac * dur));
+                return;
+            }
+        }
+    }
+
+    /// Handle an OS media-key / now-playing control event.
+    fn on_media(&mut self, e: MediaControlEvent) {
+        match e {
+            MediaControlEvent::Play => self.engine.send(TransportCmd::Play),
+            MediaControlEvent::Pause => self.engine.send(TransportCmd::Pause),
+            MediaControlEvent::Toggle => self.engine.send(TransportCmd::Toggle),
+            MediaControlEvent::Stop => self.engine.send(TransportCmd::Pause),
+            MediaControlEvent::Next => self.play_relative(1),
+            MediaControlEvent::Previous => self.play_relative(-1),
+            MediaControlEvent::Seek(SeekDirection::Forward) => {
+                self.engine.send(TransportCmd::SeekRel(5.0))
+            }
+            MediaControlEvent::Seek(SeekDirection::Backward) => {
+                self.engine.send(TransportCmd::SeekRel(-5.0))
+            }
+            MediaControlEvent::SeekBy(dir, dur) => {
+                let s = dur.as_secs_f64();
+                let d = if matches!(dir, SeekDirection::Backward) {
+                    -s
+                } else {
+                    s
+                };
+                self.engine.send(TransportCmd::SeekRel(d));
+            }
+            MediaControlEvent::SetPosition(pos) => {
+                self.engine.send(TransportCmd::SeekTo(pos.0.as_secs_f64()))
+            }
+            MediaControlEvent::Quit => self.should_quit = true,
+            _ => {}
+        }
+    }
+
+    /// Push the now-playing track's tags to the OS now-playing display.
+    fn push_media_metadata(&mut self) {
+        let Some(p) = self.now_playing.clone() else {
+            return;
+        };
+        let meta = self.meta_cache.get(&p);
+        let title = meta
+            .filter(|m| !m.title.is_empty())
+            .map(|m| m.title.clone())
+            .unwrap_or_else(|| {
+                p.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
+        let artist = meta.map(|m| m.artist.clone()).unwrap_or_default();
+        let album = meta.map(|m| m.album.clone()).unwrap_or_default();
+        let duration = meta
+            .map(|m| m.duration)
+            .filter(|d| *d > 0.0)
+            .map(std::time::Duration::from_secs_f64);
+        if let Some(controls) = self.media.as_mut() {
+            let _ = controls.set_metadata(MediaMetadata {
+                title: Some(&title),
+                artist: (!artist.is_empty()).then_some(&artist),
+                album: (!album.is_empty()).then_some(&album),
+                duration,
+                cover_url: None,
+            });
+        }
+    }
+
+    /// Keep the OS play/pause indicator in sync with the engine.
+    fn sync_media_playback(&mut self) {
+        let playing = self.engine.is_playing();
+        if playing == self.media_playing {
+            return;
+        }
+        self.media_playing = playing;
+        if let Some(controls) = self.media.as_mut() {
+            let state = if playing {
+                MediaPlayback::Playing { progress: None }
+            } else {
+                MediaPlayback::Paused { progress: None }
+            };
+            let _ = controls.set_playback(state);
+        }
     }
 
     /// On the play->stop edge at the end of a track, apply the loop mode.
@@ -528,4 +701,51 @@ impl App {
             }
         });
     }
+}
+
+/// Best-effort OS media-control setup. Returns `None` (and the app keeps
+/// working) if the platform integration is unavailable.
+fn init_media(tx: &Sender<AppEvent>) -> Option<MediaControls> {
+    let config = PlatformConfig {
+        dbus_name: "muse",
+        display_name: "muse",
+        hwnd: console_hwnd(),
+    };
+    let mut controls = MediaControls::new(config).ok()?;
+    let tx = tx.clone();
+    controls
+        .attach(move |event| {
+            let _ = tx.send(AppEvent::Media(event));
+        })
+        .ok()?;
+    Some(controls)
+}
+
+/// Windows SMTC needs a window handle; a console app can borrow the console's.
+#[cfg(target_os = "windows")]
+fn console_hwnd() -> Option<*mut std::ffi::c_void> {
+    unsafe extern "system" {
+        fn GetConsoleWindow() -> *mut std::ffi::c_void;
+    }
+    let h = unsafe { GetConsoleWindow() };
+    (!h.is_null()).then_some(h)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn console_hwnd() -> Option<*mut std::ffi::c_void> {
+    None
+}
+
+/// Fraction (0..1) along `r`'s inner (inside-border) width at column `col`, if
+/// the point is inside the rect; `None` otherwise.
+fn frac_in_rect(r: Rect, col: u16, row: u16) -> Option<f64> {
+    if r.width < 3 || r.height < 2 {
+        return None;
+    }
+    if row < r.y || row >= r.y + r.height || col <= r.x || col >= r.x + r.width - 1 {
+        return None;
+    }
+    let left = r.x + 1;
+    let span = (r.width - 2) as f64;
+    Some(((col - left) as f64 / span).clamp(0.0, 1.0))
 }
