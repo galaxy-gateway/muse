@@ -29,6 +29,16 @@ pub enum Anim {
     Glitch,
     /// Electric: lightning bolts, crackling borders, spark particles.
     Electric,
+    /// Matrix digital rain; scroll spawns extra cascades.
+    Matrix,
+    /// Rising bubbles; clicking pops a cluster upward.
+    Bubbles,
+    /// Warp starfield from screen center; navigation triggers a warp burst.
+    Starfield,
+    /// Drifting cherry-blossom petals; the mouse blows them like wind.
+    Sakura,
+    /// RAVE: confetti, strobe, fireworks on the beat, mega-explosions on click.
+    Rave,
 }
 
 #[derive(Clone, Copy)]
@@ -286,6 +296,71 @@ pub const THEMES: &[Theme] = &[
         playing: rgb(0xbf, 0xe9, 0xff),
         bg_sel: rgb(0x0a, 0x10, 0x24),
         anim: Anim::Electric,
+    },
+    Theme {
+        name: "matrix",
+        accent: rgb(0x00, 0xff, 0x41),
+        accent2: rgb(0x00, 0xc8, 0x33),
+        dir: rgb(0x1f, 0xd0, 0x4a),
+        media: rgb(0x9d, 0xff, 0xae),
+        dim: rgb(0x1a, 0x66, 0x33),
+        scope: rgb(0x00, 0xff, 0x41),
+        wave: rgb(0x12, 0x9a, 0x3a),
+        playing: rgb(0xb6, 0xff, 0x6a),
+        bg_sel: rgb(0x03, 0x16, 0x09),
+        anim: Anim::Matrix,
+    },
+    Theme {
+        name: "aqua",
+        accent: rgb(0x46, 0xe0, 0xff),
+        accent2: rgb(0x6a, 0xf0, 0xd8),
+        dir: rgb(0x52, 0xc8, 0xff),
+        media: rgb(0xcf, 0xf3, 0xff),
+        dim: rgb(0x35, 0x6a, 0x82),
+        scope: rgb(0x46, 0xe0, 0xff),
+        wave: rgb(0x2f, 0x9a, 0xc8),
+        playing: rgb(0x9a, 0xf0, 0xff),
+        bg_sel: rgb(0x06, 0x18, 0x24),
+        anim: Anim::Bubbles,
+    },
+    Theme {
+        name: "cosmic",
+        accent: rgb(0xb0, 0xa8, 0xff),
+        accent2: rgb(0xff, 0x9d, 0xe0),
+        dir: rgb(0x8a, 0x9a, 0xff),
+        media: rgb(0xe6, 0xe2, 0xff),
+        dim: rgb(0x55, 0x52, 0x80),
+        scope: rgb(0xc8, 0xb8, 0xff),
+        wave: rgb(0x6a, 0x6a, 0xc8),
+        playing: rgb(0xff, 0xd0, 0xf0),
+        bg_sel: rgb(0x0c, 0x0a, 0x1e),
+        anim: Anim::Starfield,
+    },
+    Theme {
+        name: "sakura",
+        accent: rgb(0xff, 0x9e, 0xcf),
+        accent2: rgb(0xff, 0xc4, 0xe0),
+        dir: rgb(0xe8, 0x9a, 0xc8),
+        media: rgb(0xff, 0xe6, 0xf2),
+        dim: rgb(0x8a, 0x66, 0x7a),
+        scope: rgb(0xff, 0x9e, 0xcf),
+        wave: rgb(0xd8, 0x7d, 0xb0),
+        playing: rgb(0xff, 0xc4, 0xe0),
+        bg_sel: rgb(0x22, 0x12, 0x1c),
+        anim: Anim::Sakura,
+    },
+    Theme {
+        name: "rave",
+        accent: rgb(0xff, 0x2d, 0xd4),
+        accent2: rgb(0x2d, 0xff, 0xe6),
+        dir: rgb(0xff, 0xe0, 0x2d),
+        media: rgb(0xff, 0xff, 0xff),
+        dim: rgb(0x70, 0x50, 0x90),
+        scope: rgb(0x2d, 0xff, 0xe6),
+        wave: rgb(0xff, 0x2d, 0xd4),
+        playing: rgb(0xff, 0xe0, 0x2d),
+        bg_sel: rgb(0x14, 0x06, 0x1e),
+        anim: Anim::Rave,
     },
 ];
 

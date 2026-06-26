@@ -59,6 +59,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Anim::Flag => draw_flag(f, app, inspector[0]),
         Anim::Glitch => draw_glitch(f, app),
         Anim::Electric => draw_electric_effects(f, app),
+        Anim::Matrix => draw_particles(f, app, matrix_glyph),
+        Anim::Bubbles => draw_particles(f, app, bubble_glyph),
+        Anim::Starfield => draw_particles(f, app, star_glyph),
+        Anim::Sakura => draw_particles(f, app, petal_glyph),
+        Anim::Rave => draw_rave(f, app),
         _ => {}
     }
     draw_hover_seek(f, app);
@@ -177,6 +182,106 @@ fn calcifer_rows(frame: u64) -> [(String, Color); 3] {
 
 /// Flame-theme overlays: navigation particles, a burning playhead column, and
 /// the Calcifer fireball in the top-right corner.
+/// Generic particle renderer: draw every live particle with `glyph(t, seed)`.
+fn draw_particles(f: &mut Frame, app: &App, glyph: fn(f64, u32) -> (char, Color)) {
+    let scr = app.screen;
+    let frame = app.frame as u32;
+    let buf = f.buffer_mut();
+    for p in &app.particles {
+        let (x, y) = (p.x.round() as i32, p.y.round() as i32);
+        if x < scr.x as i32
+            || x >= scr.right() as i32
+            || y < scr.y as i32
+            || y >= scr.bottom() as i32
+        {
+            continue;
+        }
+        let (ch, col) = glyph(p.age as f64 / p.life.max(1) as f64, p.seed ^ frame);
+        let cell = &mut buf[(x as u16, y as u16)];
+        cell.set_char(ch);
+        cell.set_fg(col);
+    }
+}
+
+fn matrix_glyph(t: f64, seed: u32) -> (char, Color) {
+    const G: [char; 12] = ['0', '1', 'ﾊ', 'ｱ', 'ﾝ', 'ｦ', 'ﾘ', 'ｷ', 'ﾂ', '7', ':', '*'];
+    let ch = G[seed as usize % G.len()];
+    let col = if t < 0.12 {
+        Color::Rgb(0xd6, 0xff, 0xd6) // bright head
+    } else if t < 0.5 {
+        Color::Rgb(0x00, 0xff, 0x41)
+    } else {
+        let f = 1.0 - (t - 0.5);
+        Color::Rgb(0, (0xc0 as f64 * f) as u8, (0x30 as f64 * f) as u8)
+    };
+    (ch, col)
+}
+
+fn bubble_glyph(t: f64, seed: u32) -> (char, Color) {
+    const G: [char; 6] = ['○', '◯', '◌', '∘', '°', '·'];
+    let ch = G[seed as usize % G.len()];
+    let col = if t < 0.5 {
+        Color::Rgb(0x9a, 0xf0, 0xff)
+    } else {
+        Color::Rgb(0x46, 0xc0, 0xe0)
+    };
+    (ch, col)
+}
+
+fn star_glyph(t: f64, seed: u32) -> (char, Color) {
+    // Older (farther from center) = bigger + brighter -> warp streak feel.
+    let (ch, col) = if t < 0.25 {
+        ('·', Color::Rgb(0x9a, 0x96, 0xd0))
+    } else if t < 0.55 {
+        ('+', Color::Rgb(0xc8, 0xc2, 0xff))
+    } else {
+        let g = ['✦', '✶', '✷'][seed as usize % 3];
+        (g, Color::Rgb(0xff, 0xff, 0xff))
+    };
+    (ch, col)
+}
+
+fn petal_glyph(_t: f64, seed: u32) -> (char, Color) {
+    const G: [char; 5] = ['✿', '❀', '✾', '❁', '❃'];
+    let ch = G[seed as usize % G.len()];
+    let col = match seed % 3 {
+        0 => Color::Rgb(0xff, 0x9e, 0xcf),
+        1 => Color::Rgb(0xff, 0xc4, 0xe0),
+        _ => Color::Rgb(0xe8, 0x7d, 0xb8),
+    };
+    (ch, col)
+}
+
+fn confetti_glyph(t: f64, seed: u32) -> (char, Color) {
+    const G: [char; 6] = ['▪', '◆', '●', '★', '✦', '▰'];
+    let ch = G[seed as usize % G.len()];
+    // Vivid rainbow that also shifts as it ages.
+    let col = hue((seed % 360) as f64 / 360.0 + t * 0.5);
+    (ch, col)
+}
+
+/// RAVE: confetti particles + strobing color bands across the screen.
+fn draw_rave(f: &mut Frame, app: &App) {
+    draw_particles(f, app, confetti_glyph);
+    let area = f.area();
+    let (w, h) = (area.width as u32, area.height as u32);
+    if w < 2 || h < 2 {
+        return;
+    }
+    let frame = app.frame as u32;
+    let buf = f.buffer_mut();
+    // A couple of strobing color bands that jump rows every few frames.
+    for b in 0..2u32 {
+        let row = crate::util::noise(frame / 3 + b * 41, b * 7) % h;
+        let col = hue((frame as f64 * 0.07) + b as f64 * 0.5);
+        let y = area.y + row as u16;
+        for c in 0..area.width {
+            let cell = &mut buf[(area.x + c, y)];
+            cell.set_bg(col);
+        }
+    }
+}
+
 fn draw_flame_effects(f: &mut Frame, app: &App) {
     let area = f.area();
     let frame = app.frame as u32;
@@ -574,6 +679,15 @@ fn border(theme: &Theme, frame: u64, base: Color, offset: f64) -> Color {
                 Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
             }
         }
+        Anim::Matrix => {
+            let n = crate::util::noise(frame as u32 / 2, (offset * 90.0) as u32) % 100;
+            let f = 0.5 + 0.5 * (n as f64 / 100.0);
+            let (r, g, b) = rgb_of(base);
+            Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
+        }
+        Anim::Bubbles => glow(base, frame, offset),
+        Anim::Starfield | Anim::Sakura => base,
+        Anim::Rave => hue(frame as f64 * 0.05 + offset),
     }
 }
 

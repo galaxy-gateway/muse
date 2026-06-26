@@ -34,7 +34,12 @@ muse ~/Music    # explore a directory
   borders), `trans flow` (slow trans-palette drift), `ripple` (glow pulsing
   across panels), `snow` (falling snowflakes), `cmyk` (oscillating CMY borders),
   and `not gay` (hacker-green flames on navigation, a burning playhead, and a
-  Calcifer fireball in the corner) — plus static `straight` and retro `hacker`
+  Calcifer fireball in the corner) — plus static `straight` and retro `hacker`.
+  More particle themes, each with their own interaction: `electric` (lightning
+  in the scope), `matrix` (digital rain; scroll spawns cascades), `aqua` (rising
+  bubbles; click pops a cluster), `cosmic` (warp starfield; navigation warps),
+  `sakura` (drifting petals the mouse blows like wind), and `rave` (confetti,
+  strobe, beat fireworks, click mega-explosions)
 - Remembers the last scope preset and theme between launches (TOML at the
   platform config dir)
 

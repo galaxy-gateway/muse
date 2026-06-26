@@ -302,6 +302,7 @@ impl App {
                 self.check_track_end();
                 self.sync_media_playback();
                 self.spawn_scope_particles();
+                self.spawn_theme_ambient();
                 self.update_particles();
                 self.frame = self.frame.wrapping_add(1);
             }
@@ -465,19 +466,213 @@ impl App {
             Some(p) if i < p => 1.0,  // moved up   -> down
             _ => -1.0,
         };
-        self.spawn_nav_particles(dir);
+        self.on_nav(dir);
     }
 
-    /// Whether this theme uses the particle system.
+    /// Per-theme reaction to cursor navigation.
+    fn on_nav(&mut self, dir: f32) {
+        match self.theme.anim {
+            Anim::Flame | Anim::Electric => self.spawn_nav_particles(dir),
+            Anim::Starfield => self.spawn_warp(36),
+            _ => {}
+        }
+    }
+
+    /// Whether this theme uses the flame/spark nav+scope particle behavior.
     fn particle_theme(&self) -> bool {
         matches!(self.theme.anim, Anim::Flame | Anim::Electric)
     }
 
     fn cap_particles(&mut self) {
-        if self.particles.len() > 500 {
-            let drop = self.particles.len() - 500;
+        if self.particles.len() > 700 {
+            let drop = self.particles.len() - 700;
             self.particles.drain(0..drop);
         }
+    }
+
+    /// Generic radial burst at a point.
+    fn burst(&mut self, cx: u16, cy: u16, count: u32, spd: f32, life: u16) {
+        for i in 0..count {
+            let seed = crate::util::noise(self.frame as u32 + i, (cx as u32) * 131 + cy as u32);
+            let ang = (i as f32 / count.max(1) as f32) * std::f32::consts::TAU
+                + (seed % 100) as f32 * 0.02;
+            let s = spd * (0.4 + (seed % 6) as f32 * 0.13);
+            self.particles.push(Spark {
+                x: cx as f32,
+                y: cy as f32,
+                vx: ang.cos() * s,
+                vy: ang.sin() * s,
+                age: 0,
+                life,
+                seed,
+            });
+        }
+        self.cap_particles();
+    }
+
+    /// Warp burst of stars from the screen center.
+    fn spawn_warp(&mut self, count: u32) {
+        let s = self.screen;
+        let (cx, cy) = ((s.x + s.width / 2) as f32, (s.y + s.height / 2) as f32);
+        for i in 0..count {
+            let seed = crate::util::noise(self.frame as u32 + i, 0x5747);
+            let ang = (seed % 360) as f32 * 0.0174;
+            let spd = 0.5 + (seed % 8) as f32 * 0.12;
+            self.particles.push(Spark {
+                x: cx,
+                y: cy,
+                vx: ang.cos() * spd,
+                vy: ang.sin() * spd,
+                age: 0,
+                life: 70,
+                seed,
+            });
+        }
+        self.cap_particles();
+    }
+
+    /// Per-theme click interaction.
+    fn spawn_click(&mut self, col: u16, row: u16) {
+        match self.theme.anim {
+            Anim::Flame | Anim::Electric => self.burst(col, row, 22, 0.7, 12),
+            Anim::Flag => self.burst(col, row, 26, 0.7, 14),
+            Anim::Starfield => self.burst(col, row, 50, 1.3, 18), // supernova
+            Anim::Sakura => self.burst(col, row, 16, 0.4, 46),
+            Anim::Rave => {
+                self.burst(col, row, 80, 1.6, 22); // mega-explosion
+                self.burst(col, row, 40, 0.7, 30);
+            }
+            Anim::Bubbles => {
+                for i in 0..18u32 {
+                    let seed = crate::util::noise(self.frame as u32 + i, col as u32 * 131);
+                    self.particles.push(Spark {
+                        x: col as f32 + ((seed % 5) as f32 - 2.0),
+                        y: row as f32,
+                        vx: ((seed % 7) as f32 - 3.0) * 0.12,
+                        vy: -(0.3 + (seed % 4) as f32 * 0.12),
+                        age: 0,
+                        life: 60,
+                        seed,
+                    });
+                }
+                self.cap_particles();
+            }
+            Anim::Matrix => {
+                for i in 0..14u32 {
+                    let seed = crate::util::noise(self.frame as u32 + i, col as u32 * 17);
+                    self.particles.push(Spark {
+                        x: col as f32 + ((seed % 5) as f32 - 2.0),
+                        y: row as f32,
+                        vx: 0.0,
+                        vy: 0.45 + (seed % 3) as f32 * 0.15,
+                        age: 0,
+                        life: 90,
+                        seed,
+                    });
+                }
+                self.cap_particles();
+            }
+            _ => {}
+        }
+    }
+
+    /// Continuous per-theme ambient particles, spawned each tick.
+    fn spawn_theme_ambient(&mut self) {
+        let s = self.screen;
+        if s.width < 4 || s.height < 4 {
+            return;
+        }
+        let f = self.frame as u32;
+        let w = s.width as u32;
+        match self.theme.anim {
+            Anim::Matrix => {
+                for i in 0..3u32 {
+                    let seed = crate::util::noise(f + i, 0x4A7);
+                    self.particles.push(Spark {
+                        x: (s.x as u32 + seed % w) as f32,
+                        y: s.y as f32,
+                        vx: 0.0,
+                        vy: 0.5 + (seed % 3) as f32 * 0.18,
+                        age: 0,
+                        life: 150,
+                        seed,
+                    });
+                }
+            }
+            Anim::Bubbles => {
+                for i in 0..2u32 {
+                    let seed = crate::util::noise(f + i, 0xB0B);
+                    self.particles.push(Spark {
+                        x: (s.x as u32 + seed % w) as f32,
+                        y: (s.y + s.height - 1) as f32,
+                        vx: ((seed % 5) as f32 - 2.0) * 0.05,
+                        vy: -(0.25 + (seed % 4) as f32 * 0.1),
+                        age: 0,
+                        life: 150,
+                        seed,
+                    });
+                }
+            }
+            Anim::Starfield => self.spawn_warp(2),
+            Anim::Sakura => {
+                let seed = crate::util::noise(f, 0x5A6);
+                self.particles.push(Spark {
+                    x: (s.x as u32 + seed % w) as f32,
+                    y: s.y as f32,
+                    vx: ((seed % 7) as f32 - 3.0) * 0.05,
+                    vy: 0.18 + (seed % 3) as f32 * 0.05,
+                    age: 0,
+                    life: 200,
+                    seed,
+                });
+            }
+            Anim::Rave => {
+                for i in 0..4u32 {
+                    let seed = crate::util::noise(f + i, 0xACE);
+                    self.particles.push(Spark {
+                        x: (s.x as u32 + seed % w) as f32,
+                        y: (s.y as u32 + (seed / 7) % s.height as u32) as f32,
+                        vx: ((seed % 9) as f32 - 4.0) * 0.1,
+                        vy: ((seed / 9 % 9) as f32 - 4.0) * 0.1,
+                        age: 0,
+                        life: 28,
+                        seed,
+                    });
+                }
+                // Fireworks on loud beats.
+                let peak = self.scope_buf.iter().fold(0f32, |m, &x| m.max(x.abs()));
+                if peak > 0.3 && f % 3 == 0 {
+                    let seed = crate::util::noise(f, 0xF12E);
+                    let cx = s.x + (seed % w) as u16;
+                    let cy = s.y + (seed / 11 % (s.height as u32 / 2).max(1)) as u16;
+                    self.burst(cx, cy, 30, 1.0, 20);
+                }
+            }
+            _ => {}
+        }
+        self.cap_particles();
+    }
+
+    /// Matrix: a scroll spawns an extra cascade across the screen.
+    fn scroll_effect(&mut self) {
+        if self.theme.anim != Anim::Matrix {
+            return;
+        }
+        let s = self.screen;
+        let w = (s.width as u32).max(1);
+        for i in 0..12u32 {
+            let seed = crate::util::noise(self.frame as u32 + i, 0xC0DE);
+            self.particles.push(Spark {
+                x: (s.x as u32 + seed % w) as f32,
+                y: s.y as f32,
+                vx: 0.0,
+                vy: 0.6 + (seed % 3) as f32 * 0.2,
+                age: 0,
+                life: 150,
+                seed,
+            });
+        }
+        self.cap_particles();
     }
 
     /// Burst at the cursor row, travelling vertically in `dir` with x-jitter.
@@ -505,29 +700,6 @@ impl App {
                 vy,
                 age: 0,
                 life: 9 + (seed % 8) as u16,
-                seed,
-            });
-        }
-        self.cap_particles();
-    }
-
-    /// Radial burst from a point (click): flame/spark embers, or a firework for
-    /// the flag theme.
-    fn spawn_radial(&mut self, cx: u16, cy: u16) {
-        if !self.particle_theme() && self.theme.anim != Anim::Flag {
-            return;
-        }
-        for i in 0..22u32 {
-            let seed = crate::util::noise(self.frame as u32 + i, (cx as u32) * 131 + cy as u32);
-            let ang = (i as f32 / 22.0) * std::f32::consts::TAU + (seed % 100) as f32 * 0.01;
-            let spd = 0.45 + (seed % 6) as f32 * 0.14;
-            self.particles.push(Spark {
-                x: cx as f32,
-                y: cy as f32,
-                vx: ang.cos() * spd,
-                vy: ang.sin() * spd,
-                age: 0,
-                life: 8 + (seed % 9) as u16,
                 seed,
             });
         }
@@ -573,7 +745,14 @@ impl App {
         }
         let s = self.screen;
         let (w, h) = (s.width as f32, s.height as f32);
+        // Sakura: the mouse blows petals like a gust of wind.
+        let wind = (self.theme.anim == Anim::Sakura)
+            .then(|| self.hover.map(|(hx, _)| hx as f32))
+            .flatten();
         self.particles.retain_mut(|p| {
+            if let Some(hx) = wind {
+                p.vx = (p.vx + (hx - p.x).signum() * 0.03).clamp(-0.6, 0.6);
+            }
             p.x += p.vx;
             p.y += p.vy;
             p.age += 1;
@@ -695,13 +874,19 @@ impl App {
         let (col, row) = (m.column, m.row);
         self.hover = Some((col, row));
         match m.kind {
-            MouseEventKind::ScrollDown => self.move_cursor(3),
-            MouseEventKind::ScrollUp => self.move_cursor(-3),
+            MouseEventKind::ScrollDown => {
+                self.move_cursor(3);
+                self.scroll_effect();
+            }
+            MouseEventKind::ScrollUp => {
+                self.move_cursor(-3);
+                self.scroll_effect();
+            }
             MouseEventKind::ScrollRight => self.tree_hscroll = (self.tree_hscroll + 2).min(80),
             MouseEventKind::ScrollLeft => self.tree_hscroll = self.tree_hscroll.saturating_sub(2),
             MouseEventKind::Down(MouseButton::Left) => {
-                // Every click throws a radial particle burst at the pointer.
-                self.spawn_radial(col, row);
+                // Every click triggers the theme's click interaction at the pointer.
+                self.spawn_click(col, row);
                 // Seek bars take priority; start a scrub if pressed on one.
                 for rect in [self.wave_rect, self.transport_rect] {
                     if frac_in_rect(rect, col, row).is_some() {
