@@ -93,28 +93,66 @@ impl App {
     }
 }
 
-/// Fraction (0..1) along `r`'s inner (inside-border) width at column `col`, if
-/// the point is inside the rect; `None` otherwise.
+/// Seek fraction (0..1) for a press at (col,row) if it lands inside `r`'s
+/// interior — excluding the border rows/columns — else `None`. Mirrors
+/// `tree_row_at`'s border exclusion so a click on a panel's title/border row is
+/// not treated as a seek.
 fn frac_in_rect(r: Rect, col: u16, row: u16) -> Option<f64> {
-    if r.width < 3 || r.height < 2 {
+    if r.width < 4 || r.height < 3 {
         return None;
     }
-    if row < r.y || row >= r.y + r.height || col <= r.x || col >= r.x + r.width - 1 {
+    if row <= r.y || row >= r.y + r.height - 1 || col <= r.x || col >= r.x + r.width - 1 {
         return None;
     }
-    let left = r.x + 1;
-    let span = (r.width - 2) as f64;
-    Some(((col - left) as f64 / span).clamp(0.0, 1.0))
+    Some(frac_col(r, col))
 }
 
 /// Fraction (0..1) of `r`'s inner width at column `col`, clamped — ignores the
-/// row, so a drag keeps scrubbing even if the pointer drifts off the bar.
+/// row, so a drag keeps scrubbing even if the pointer drifts off the bar. The
+/// interior spans columns `[r.x+1, r.x+r.width-2]`, so the divisor is the gap
+/// between those ends (`width-3`); the rightmost cell must map to exactly 1.0 so
+/// the end of the track is reachable.
 fn frac_col(r: Rect, col: u16) -> f64 {
-    if r.width < 3 {
+    if r.width < 4 {
         return 0.0;
     }
     let left = r.x + 1;
     let right = r.x + r.width - 2;
     let c = col.clamp(left, right);
-    (c - left) as f64 / (r.width - 2) as f64
+    (c - left) as f64 / (right - left) as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(w: u16, h: u16) -> Rect {
+        Rect {
+            x: 4,
+            y: 2,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn frac_col_spans_full_range() {
+        let r = rect(12, 3); // interior cols 5..=14
+        assert_eq!(frac_col(r, 5), 0.0); // left edge
+        assert_eq!(frac_col(r, 14), 1.0); // right edge reaches end-of-track
+        assert!((frac_col(r, 9) - 4.0 / 9.0).abs() < 1e-9);
+        // off-bar columns clamp, never exceed the bounds
+        assert_eq!(frac_col(r, 0), 0.0);
+        assert_eq!(frac_col(r, 200), 1.0);
+    }
+
+    #[test]
+    fn frac_in_rect_excludes_borders() {
+        let r = rect(12, 5); // border rows y=2 and y=6; interior rows 3..=5
+        assert!(frac_in_rect(r, 8, 2).is_none()); // top border / title row
+        assert!(frac_in_rect(r, 8, 6).is_none()); // bottom border
+        assert!(frac_in_rect(r, 4, 4).is_none()); // left border col
+        assert!(frac_in_rect(r, 15, 4).is_none()); // right border col
+        assert!(frac_in_rect(r, 8, 4).is_some()); // interior hit
+    }
 }
