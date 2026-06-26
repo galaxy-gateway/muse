@@ -26,6 +26,7 @@ use crate::event::AppEvent;
 use crate::media::{Meta, Registry};
 use crate::model::{NodeId, TreeModel};
 use crate::particles::ParticleSim;
+use crate::spectrum::SpectrumState;
 
 use mediakeys::init_media;
 
@@ -79,6 +80,8 @@ pub struct App {
     pub(super) prev_playing: bool,
     pub scope_buf: Vec<f32>,
     pub scope_idx: usize,
+    /// FFT band state for the live spectrum visualizer preset.
+    pub spectrum: SpectrumState,
 
     pub filter: String,
     pub filtering: bool,
@@ -125,6 +128,7 @@ impl App {
         let registry = Registry::new();
         let tree = TreeModel::new(root, &registry);
         let engine = AudioEngine::new()?;
+        let spectrum = SpectrumState::new(engine.sample_rate());
         let mut list_state = ListState::default();
         if !tree.visible.is_empty() {
             list_state.select(Some(0));
@@ -158,6 +162,7 @@ impl App {
             prev_playing: false,
             scope_buf: vec![0.0; crate::audio::SCOPE_LEN * 2],
             scope_idx,
+            spectrum,
             filter: String::new(),
             filtering: false,
             filtered: Vec::new(),
@@ -243,6 +248,11 @@ impl App {
             AppEvent::Media(e) => self.on_media(e),
             AppEvent::Tick => {
                 self.scope_buf.copy_from_slice(self.engine.scope());
+                if self.engine.is_playing() {
+                    self.spectrum.update_scope(&self.scope_buf);
+                } else {
+                    self.spectrum.decay();
+                }
                 self.check_track_end();
                 self.sync_media_playback();
                 let ctx = self.frame_ctx();

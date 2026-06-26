@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Context, Line as CLine, Points};
@@ -13,7 +13,8 @@ use ratatui::widgets::{Padding, Paragraph, Wrap};
 
 use super::widgets::{border, panel, panel_hint};
 use crate::app::App;
-use crate::config::{ScopeMode, ScopeStyle};
+use crate::color::rgb_of;
+use crate::config::{ScopeMode, ScopeStyle, Theme};
 use crate::util::{fmt_time, fmt_time_precise};
 
 pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
@@ -195,6 +196,11 @@ fn draw_waveform(
 fn draw_scope(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     let preset = app.scope_preset();
+    if preset.style == ScopeStyle::Spectrum {
+        draw_spectrum(f, app, area);
+        return;
+    }
+
     let buf = &app.scope_buf; // interleaved stereo, most recent last
     let inner_w = area.width.saturating_sub(2).max(1) as f64;
 
@@ -329,7 +335,110 @@ fn draw_scope(f: &mut Frame, app: &App, area: Rect) {
                         color: t.scope,
                     });
                 }
+                ScopeStyle::Spectrum => {}
             }
         });
     f.render_widget(canvas, area);
+}
+
+/// Live FFT spectrum analyzer: per-column bars rendered in braille sub-cells,
+/// left/right braille columns packed two interpolated bands per terminal cell.
+fn draw_spectrum(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let bands = app.spectrum.bands();
+    if bands.is_empty() {
+        return;
+    }
+
+    f.render_widget(
+        panel_hint(
+            "spectrum · live",
+            border(t, app.frame, t.scope, 0.56),
+            "v/V preset",
+            t.dim,
+        ),
+        area,
+    );
+
+    let inner = Rect {
+        x: area.x.saturating_add(1),
+        y: area.y.saturating_add(1),
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let sub_cols = inner.width as usize * 2;
+    let sub_rows = inner.height as usize * 4;
+    const DOTS: [[u8; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
+    let buf = f.buffer_mut();
+    for cell_x in 0..inner.width as usize {
+        let left = spectrum_value_at(bands, cell_x * 2, sub_cols).clamp(0.0, 1.0);
+        let right = spectrum_value_at(bands, cell_x * 2 + 1, sub_cols).clamp(0.0, 1.0);
+        let left_h = if left > 0.005 {
+            (left * sub_rows as f32).ceil() as usize
+        } else {
+            0
+        };
+        let right_h = if right > 0.005 {
+            (right * sub_rows as f32).ceil() as usize
+        } else {
+            0
+        };
+        let color = spectrum_color(t, left.max(right));
+
+        for cell_y in 0..inner.height as usize {
+            let mut mask = 0u8;
+            for row in 0..4 {
+                let sub_y_from_top = cell_y * 4 + row;
+                let sub_y_from_bottom = sub_rows - 1 - sub_y_from_top;
+                if sub_y_from_bottom < left_h {
+                    mask |= DOTS[0][row];
+                }
+                if sub_y_from_bottom < right_h {
+                    mask |= DOTS[1][row];
+                }
+            }
+
+            let cell = &mut buf[(inner.x + cell_x as u16, inner.y + cell_y as u16)];
+            if mask == 0 {
+                cell.set_char(' ');
+                cell.set_fg(t.dim);
+            } else {
+                cell.set_char(char::from_u32(0x2800 + mask as u32).unwrap_or(' '));
+                cell.set_fg(color);
+            }
+        }
+    }
+}
+
+/// Ramp a 0..1 band magnitude through dim → scope → playing for a heat-map feel.
+fn spectrum_color(theme: &Theme, value: f32) -> Color {
+    let (a, b, t) = if value < 0.5 {
+        (theme.dim, theme.scope, value * 2.0)
+    } else {
+        (theme.scope, theme.playing, (value - 0.5) * 2.0)
+    };
+    let (ar, ag, ab) = rgb_of(a);
+    let (br, bg, bb) = rgb_of(b);
+    let t = t.clamp(0.0, 1.0) as f64;
+    Color::Rgb(
+        (ar + (br - ar) * t) as u8,
+        (ag + (bg - ag) * t) as u8,
+        (ab + (bb - ab) * t) as u8,
+    )
+}
+
+/// Linearly interpolate the band array across the available sub-columns.
+fn spectrum_value_at(bands: &[f32], sub_x: usize, sub_cols: usize) -> f32 {
+    if bands.len() == 1 || sub_cols == 1 {
+        return bands[0];
+    }
+    let pos = sub_x as f32 * (bands.len() - 1) as f32 / (sub_cols - 1) as f32;
+    let i0 = pos.floor() as usize;
+    let i1 = (i0 + 1).min(bands.len() - 1);
+    let frac = pos - i0 as f32;
+    bands[i0] + (bands[i1] - bands[i0]) * frac
 }

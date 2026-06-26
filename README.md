@@ -14,10 +14,9 @@ muse ~/Music    # explore a directory
 - Lazy recursive file tree (dirs scanned on expand; dotfiles, non-media, and
   directories holding no music anywhere below them are hidden)
 - Audio playback via symphonia → cpal, with an ffmpeg fallback decoder
-- **Live oscilloscope** (braille canvas, sample-synced via a `triple_buffer` tap
+- **Live visualizers** (sample-synced via a `triple_buffer` tap
   in the audio callback) with cyclable presets (`v`): line, fast, mirror, dots,
-  bars, and a stereo XY / Lissajous vectorscope — each bundles a render style,
-  signal mode, time-window, and auto-gain setting
+  bars, stereo XY / Lissajous vectorscope, and a live spectrum analyzer
 - **Static waveform** overview (background peak-bin analysis, cached) with a
   playhead
 - `selection` panel (above the file tree) follows the cursor; a separate
@@ -60,7 +59,7 @@ preview + compare can be added later without touching the core.
 | `shift`+`←`/`→` | scrub playhead ∓1s |
 | click waveform/transport | seek to position |
 | `-` / `+` | volume |
-| `v` / `V` | cycle scope preset (forward / back) |
+| `v` / `V` | cycle visualizer preset (forward / back) |
 | `t` / `T` | cycle color theme (forward / back) |
 | `n` / `p` | next / previous track |
 | `r` | loop mode (off / all / one) |
