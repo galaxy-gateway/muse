@@ -70,6 +70,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  space            play / pause"),
         Line::from("  n / p            next / previous track"),
         Line::from("  r                loop mode (off / all / one)"),
+        Line::from("  b                gapless playback on / off (saved)"),
         Line::from("  , / .            seek -5s / +5s"),
         Line::from("  shift ← / →      scrub playhead -1s / +1s"),
         Line::from("  click tree       folder: fold · file: play"),

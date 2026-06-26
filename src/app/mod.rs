@@ -76,6 +76,9 @@ pub struct App {
 
     pub now_playing: Option<PathBuf>,
     pub loop_mode: LoopMode,
+    /// Gapless cross-track playback: prefetch the predicted-next track so the
+    /// decode thread can splice it in with no boundary gap. Persisted.
+    pub gapless: bool,
     /// Previous engine play-state, to detect the end-of-track falling edge.
     pub(super) prev_playing: bool,
     pub scope_buf: Vec<f32>,
@@ -159,6 +162,7 @@ impl App {
             wave_gen: 0,
             now_playing: None,
             loop_mode: LoopMode::Off,
+            gapless: settings.gapless.unwrap_or(true),
             prev_playing: false,
             scope_buf: vec![0.0; crate::audio::SCOPE_LEN * 2],
             scope_idx,
@@ -198,6 +202,7 @@ impl App {
         save_settings(&Settings {
             scope_preset: Some(self.scope_preset().name.to_string()),
             theme: Some(self.theme.name.to_string()),
+            gapless: Some(self.gapless),
         });
     }
 
@@ -256,6 +261,12 @@ impl App {
                     } else {
                         self.spectrum.decay();
                     }
+                }
+                // Decode-thread gapless advance happens before the UI knows;
+                // adopt the new now-playing first, then run the stop-edge
+                // detector (which only fires when no preload was spliced).
+                while let Some(path) = self.engine.poll_advance() {
+                    self.on_auto_advanced(path);
                 }
                 self.check_track_end();
                 self.sync_media_playback();

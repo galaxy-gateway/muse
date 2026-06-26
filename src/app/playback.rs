@@ -13,9 +13,23 @@ impl App {
             return;
         }
         self.engine.send(TransportCmd::Open(path.clone()));
+        self.begin_now_playing(path);
+    }
+
+    /// The decode thread spliced into the preloaded next track at a gapless
+    /// boundary and announced it via `poll_advance`. Sync the UI to match
+    /// WITHOUT re-issuing `Open` (which resets the transport and would
+    /// reintroduce the very gap we just avoided).
+    pub(super) fn on_auto_advanced(&mut self, path: PathBuf) {
+        self.begin_now_playing(path);
+    }
+
+    /// Shared now-playing bookkeeping once the engine is pointed at `path`,
+    /// whether by an explicit `Open` or a decode-thread auto-advance.
+    fn begin_now_playing(&mut self, path: PathBuf) {
         self.spectrum.clear();
         self.now_playing = Some(path.clone());
-        // Open will flip the engine to playing; arm end-of-track detection.
+        // The engine is (or is about to be) playing; arm end-of-track detection.
         self.prev_playing = true;
         self.push_media_metadata();
         // Ensure the now-playing waveform is computed even when playback was
@@ -31,6 +45,12 @@ impl App {
     /// engine to decode it ahead of time. Best-effort: if the prediction is
     /// wrong (the user navigates away), the stale preload is simply discarded.
     pub(super) fn preload_next(&self) {
+        // Gapless off: never prefetch, so the decode thread has nothing to
+        // splice and falls back to the UI-driven (gapped) advance. This also
+        // keeps the decoded-audio footprint to a single track.
+        if !self.gapless {
+            return;
+        }
         let list = self.current_media();
         if list.is_empty() {
             return;

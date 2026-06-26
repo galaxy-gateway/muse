@@ -54,6 +54,9 @@ pub struct AudioEngine {
     /// Requests to the background loader thread to decode a track ahead of time
     /// for gapless transitions.
     load_tx: Sender<PathBuf>,
+    /// Path of each track the decode thread spliced into at a gapless boundary,
+    /// so the UI can sync `now_playing` without re-issuing `Open`.
+    advance_rx: Receiver<PathBuf>,
     scope_out: triple_buffer::Output<Vec<f32>>,
     device_sr: u32,
     pos_frames: Arc<AtomicU64>,
@@ -153,6 +156,10 @@ impl AudioEngine {
         });
 
         // --- decode thread --------------------------------------------------
+        // The decode thread advances into a preloaded track on its own at a
+        // sample-accurate boundary (no UI round-trip) and announces the switch
+        // on `advance_tx`; the UI drains `advance_rx` to update now-playing.
+        let (advance_tx, advance_rx) = unbounded::<PathBuf>();
         let (cmd_tx, cmd_rx) = bounded::<TransportCmd>(64);
         {
             let playing = playing.clone();
@@ -161,7 +168,8 @@ impl AudioEngine {
             let dur_frames = dur_frames.clone();
             thread::spawn(move || {
                 decode_loop(
-                    cmd_rx, loaded_rx, producer, device_sr, playing, volume, pos_frames, dur_frames,
+                    cmd_rx, loaded_rx, advance_tx, producer, device_sr, playing, volume,
+                    pos_frames, dur_frames,
                 );
             });
         }
@@ -169,6 +177,7 @@ impl AudioEngine {
         Ok(Self {
             cmd_tx,
             load_tx,
+            advance_rx,
             scope_out,
             device_sr,
             pos_frames,
@@ -187,6 +196,13 @@ impl AudioEngine {
     /// `Open(path)` for the same file then switches instantly (gapless).
     pub fn preload(&self, path: PathBuf) {
         let _ = self.load_tx.send(path);
+    }
+
+    /// Non-blocking: returns the path of a track the decode thread just spliced
+    /// into at a gapless boundary, if any. The UI calls this each tick to keep
+    /// `now_playing` (and the next preload) in step with auto-advance.
+    pub fn poll_advance(&self) -> Option<PathBuf> {
+        self.advance_rx.try_recv().ok()
     }
 
     /// Latest interleaved-stereo scope window (`SCOPE_LEN * 2`, most recent last).
@@ -219,6 +235,7 @@ impl AudioEngine {
 fn decode_loop(
     cmd_rx: Receiver<TransportCmd>,
     loaded_rx: Receiver<(PathBuf, DecodedAudio)>,
+    advance_tx: Sender<PathBuf>,
     mut producer: rtrb::Producer<f32>,
     device_sr: u32,
     playing: Arc<AtomicBool>,
@@ -298,28 +315,46 @@ fn decode_loop(
         }
 
         let active = playing.load(Ordering::Relaxed);
-        if let (true, Some(a)) = (active, &audio) {
-            let total = a.frames();
+        if active && audio.is_some() {
             let mut pushed = false;
             // Push until the ring is full or the track ends.
-            while cursor < total {
-                if producer.slots() < 2 {
-                    break;
+            let total = {
+                let a = audio.as_ref().unwrap();
+                let total = a.frames();
+                while cursor < total {
+                    if producer.slots() < 2 {
+                        break;
+                    }
+                    let l = a.samples[cursor * 2];
+                    let r = a.samples[cursor * 2 + 1];
+                    if producer.push(l).is_err() {
+                        break;
+                    }
+                    let _ = producer.push(r);
+                    cursor += 1;
+                    pushed = true;
                 }
-                let l = a.samples[cursor * 2];
-                let r = a.samples[cursor * 2 + 1];
-                if producer.push(l).is_err() {
-                    break;
-                }
-                let _ = producer.push(r);
-                cursor += 1;
-                pushed = true;
-            }
+                total
+            };
             if pushed {
                 pos_frames.store(cursor as u64, Ordering::Relaxed);
             }
             if cursor >= total {
-                playing.store(false, Ordering::Relaxed);
+                // End of track. If the next track was preloaded, splice straight
+                // into it: keep the ring fed across the seam (its ~250ms tail is
+                // still draining to the DAC) so the boundary is sample-accurate
+                // with no UI round-trip. Otherwise stop and let the UI's
+                // end-of-track detector handle advance / end-of-list.
+                match preloaded.take() {
+                    Some((path, dec)) => {
+                        dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
+                        audio = Some(dec);
+                        cursor = 0;
+                        pos_frames.store(0, Ordering::Relaxed);
+                        let _ = advance_tx.send(path);
+                    }
+                    None => playing.store(false, Ordering::Relaxed),
+                }
             }
             thread::sleep(Duration::from_millis(3));
         } else if !got_cmd {

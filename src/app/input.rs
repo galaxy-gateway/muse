@@ -64,6 +64,12 @@ impl App {
                 // The predicted-next track depends on the loop mode.
                 self.preload_next();
             }
+            (KeyCode::Char('b'), _) => {
+                // Toggle gapless (back-to-back) playback; (un)prime the prefetch.
+                self.gapless = !self.gapless;
+                self.preload_next();
+                self.persist();
+            }
             (KeyCode::Char('.'), _) => self.seek_rel(5.0),
             (KeyCode::Char(','), _) => self.seek_rel(-5.0),
             (KeyCode::Char('+'), _) | (KeyCode::Char('='), _) => {

@@ -53,8 +53,9 @@ pub(super) fn draw_transport(f: &mut Frame, app: &App, area: Rect) {
         LoopMode::All => "↻",
         LoopMode::One => "↻¹",
     };
+    let gapless = if app.gapless { "  ~gapless" } else { "" };
     let label = format!(
-        " {state}  {}  {} / {}   vol {vol}%   {loop_glyph} {} ",
+        " {state}  {}  {} / {}   vol {vol}%   {loop_glyph} {}{gapless} ",
         title,
         fmt_time(pos),
         fmt_time(dur),

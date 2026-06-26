@@ -379,6 +379,9 @@ pub struct Settings {
     pub scope_preset: Option<String>,
     /// Name of the last-used color theme.
     pub theme: Option<String>,
+    /// Gapless cross-track playback (prefetch + sample-accurate splice).
+    /// `None` (absent in the file) defaults to on.
+    pub gapless: Option<bool>,
 }
 
 fn settings_path() -> Option<PathBuf> {

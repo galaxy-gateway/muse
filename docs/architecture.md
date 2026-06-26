@@ -50,13 +50,27 @@ atomics (position, duration, playing, volume).
 
 A fourth audio-side thread, the **loader**, decodes the predicted-next track
 ahead of time (`AudioEngine::preload`) and hands the finished buffer to the
-decode thread. When a track ends and the UI Opens the next one, the decode
-thread switches to the preloaded buffer instantly — no decode latency — and the
-output ring is never cleared on Open, so the previous track's tail plays out and
-the next track's samples follow contiguously. That combination makes the
-boundary seamless (gapless). MP3 encoder delay/padding is trimmed per-clip via
-the LAME/Xing tag (`enable_gapless` + per-packet `trim_start`/`trim_end`), so
-`--nogap`-encoded albums join cleanly; lossless formats have no delay to trim.
+decode thread. When the current track's samples drain, the decode thread
+**splices the preloaded buffer in itself** — no UI round-trip — so the boundary
+is sample-accurate rather than tied to the ~60Hz tick cadence and the stop-edge
+detector. The output ring is never cleared at the seam, so the previous track's
+~250ms tail plays out and the next track's samples follow contiguously. The
+decode thread then announces the switch on a back-channel (`AudioEngine::poll_advance`)
+that the UI drains each tick to update now-playing and prime the next prefetch.
+The UI-driven path (`Open` + `check_track_end`) remains the fallback for when no
+track was preloaded — end of list, gapless disabled, or a preload that lost the
+race. MP3 encoder delay/padding is trimmed per-clip via the LAME/Xing tag
+(`enable_gapless` + per-packet `trim_start`/`trim_end`), so `--nogap`-encoded
+albums join cleanly; lossless formats have no delay to trim.
+
+Gapless is a persisted, user-toggleable setting (`b` key, `Settings::gapless`,
+default on). Off disables prefetch entirely, which both restores the simple
+gapped advance and keeps the decoded-audio footprint to a single track. With it
+on, the footprint is at most two fully-decoded tracks at a time (current +
+prefetched). Tracks are decoded to an interleaved-stereo `Vec<f32>` rather than
+streamed: a 5-minute track at 48kHz is ~110MB, so two-track peak is bounded and
+acceptable for desktop use; streaming decode was considered and deferred as not
+worth the complexity at this footprint.
 
 `main.rs` wires the channel, spawns the threads, and runs the loop: drain an
 event → `app.handle(ev)` → redraw (tick redraws are coalesced to ~60fps).
@@ -158,9 +172,15 @@ and lands in `wave_cache`, keyed by path. `ui/inspector.rs` reads both caches.
 metadata, and ensures a waveform exists. The decode thread loads the track; the
 cpal callback starts pulling PCM and publishing scope frames.
 
-**End-of-track.** Each tick, `check_track_end` watches the play→stop falling
-edge near the duration and applies `LoopMode` (off = advance-then-stop, all =
-wrap, one = repeat).
+**End-of-track.** When gapless is on and the next track was prefetched, the
+decode thread auto-advances and the UI just adopts the announced path
+(`poll_advance` → `on_auto_advanced`) — `check_track_end` sees no stop edge
+(playback never paused) and stays out of it. Otherwise each tick
+`check_track_end` watches the play→stop falling edge near the duration and
+applies `LoopMode` (off = advance-then-stop, all = wrap, one = repeat). The
+predicted-next track for the prefetch follows the same `LoopMode` logic
+(`preload_next`), so the splice respects the active loop mode; a manual `n`/`p`
+or loop-mode change re-primes it.
 
 **Fuzzy filter.** `/` enters filter mode; keystrokes rebuild `filtered` by
 scoring the background `index` with `util::fuzzy_score`. While a filter is
