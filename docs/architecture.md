@@ -60,6 +60,7 @@ event → `app.handle(ev)` → redraw (tick redraws are coalesced to ~60fps).
 | `model.rs` | `TreeModel`: lazy file tree + flattened visible list |
 | `media.rs` | `MediaProvider` trait + `Registry` (the media-type seam) |
 | `audio.rs` | `AudioEngine`, decode/resample, `waveform_bins` |
+| `spectrum.rs` | `SpectrumState`: FFT (rustfft) → mel-spaced bands for the spectrum visualizer |
 | `config.rs` | `Theme`/`THEMES`, `ScopePreset`, persisted `Settings` |
 | `color.rs` | shared color math (hue, gradient, glow, scale) |
 | `particles.rs` | `ParticleSim`: the `Spark` pool + spawn/integrate primitives |
@@ -158,7 +159,15 @@ node), which gates expand/collapse.
 
 **Mouse seek.** `ui` records `wave_rect` / `transport_rect` each draw;
 `app/mouse.rs` hit-tests clicks against them and converts column → fraction →
-`TransportCmd::SeekTo`. A left-drag keeps scrubbing the latched rect.
+`TransportCmd::SeekTo`. A left-drag keeps scrubbing the latched rect. All seeks
+route through `seek_rel` / `seek_to_secs` (in `app/mouse.rs`), which clear the
+spectrum's FFT history so it doesn't smear across the discontinuity.
+
+**Spectrum visualizer.** When the `spectrum` scope preset is active,
+`ui/inspector.rs::draw_spectrum` reads `SpectrumState::bands()` and renders them
+as braille bars. The bands are recomputed each tick in `App::handle` (FFT of the
+scope window while playing, exponential decay while paused). It is a `ScopeStyle`
+variant, so it shares the `v`/`V` preset cycle with the oscilloscope modes.
 
 ## Extending muse
 

@@ -51,8 +51,8 @@ impl App {
                 self.select(self.list_len().saturating_sub(1))
             }
             // Shift+arrows scrub the playhead (fine seek); plain arrows nav tree.
-            (KeyCode::Left, KeyModifiers::SHIFT) => self.engine.send(TransportCmd::SeekRel(-1.0)),
-            (KeyCode::Right, KeyModifiers::SHIFT) => self.engine.send(TransportCmd::SeekRel(1.0)),
+            (KeyCode::Left, KeyModifiers::SHIFT) => self.seek_rel(-1.0),
+            (KeyCode::Right, KeyModifiers::SHIFT) => self.seek_rel(1.0),
             (KeyCode::Char('h'), _) | (KeyCode::Left, _) => self.collapse_or_parent(),
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => self.expand(),
             (KeyCode::Enter, _) => self.enter(),
@@ -60,8 +60,8 @@ impl App {
             (KeyCode::Char('n'), _) => self.play_relative(1),
             (KeyCode::Char('p'), _) => self.play_relative(-1),
             (KeyCode::Char('r'), _) => self.loop_mode = self.loop_mode.next(),
-            (KeyCode::Char('.'), _) => self.engine.send(TransportCmd::SeekRel(5.0)),
-            (KeyCode::Char(','), _) => self.engine.send(TransportCmd::SeekRel(-5.0)),
+            (KeyCode::Char('.'), _) => self.seek_rel(5.0),
+            (KeyCode::Char(','), _) => self.seek_rel(-5.0),
             (KeyCode::Char('+'), _) | (KeyCode::Char('='), _) => {
                 self.engine.send(TransportCmd::VolRel(0.05))
             }

@@ -20,12 +20,8 @@ impl App {
             MediaControlEvent::Stop => self.engine.send(TransportCmd::Pause),
             MediaControlEvent::Next => self.play_relative(1),
             MediaControlEvent::Previous => self.play_relative(-1),
-            MediaControlEvent::Seek(SeekDirection::Forward) => {
-                self.engine.send(TransportCmd::SeekRel(5.0))
-            }
-            MediaControlEvent::Seek(SeekDirection::Backward) => {
-                self.engine.send(TransportCmd::SeekRel(-5.0))
-            }
+            MediaControlEvent::Seek(SeekDirection::Forward) => self.seek_rel(5.0),
+            MediaControlEvent::Seek(SeekDirection::Backward) => self.seek_rel(-5.0),
             MediaControlEvent::SeekBy(dir, dur) => {
                 let s = dur.as_secs_f64();
                 let d = if matches!(dir, SeekDirection::Backward) {
@@ -33,11 +29,9 @@ impl App {
                 } else {
                     s
                 };
-                self.engine.send(TransportCmd::SeekRel(d));
+                self.seek_rel(d);
             }
-            MediaControlEvent::SetPosition(pos) => {
-                self.engine.send(TransportCmd::SeekTo(pos.0.as_secs_f64()))
-            }
+            MediaControlEvent::SetPosition(pos) => self.seek_to_secs(pos.0.as_secs_f64()),
             MediaControlEvent::Quit => self.should_quit = true,
             _ => {}
         }

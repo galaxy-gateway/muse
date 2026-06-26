@@ -345,6 +345,7 @@ pub enum ScopeStyle {
     Mirror,
     Dots,
     Bars,
+    Spectrum,
 }
 
 /// What signal the scope plots.
@@ -444,5 +445,12 @@ pub const SCOPE_PRESETS: &[ScopePreset] = &[
         mode: ScopeMode::StereoXy,
         window: 2048,
         auto_gain: true,
+    },
+    ScopePreset {
+        name: "spectrum",
+        style: ScopeStyle::Spectrum,
+        mode: ScopeMode::Mono,
+        window: 1024,
+        auto_gain: false,
     },
 ];

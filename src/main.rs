@@ -9,6 +9,7 @@ mod event;
 mod media;
 mod model;
 mod particles;
+mod spectrum;
 mod ui;
 mod util;
 

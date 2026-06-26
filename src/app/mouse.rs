@@ -56,11 +56,24 @@ impl App {
         }
     }
 
-    fn seek_to(&self, frac: f64) {
+    /// Relative seek; clears the spectrum so the FFT history doesn't smear
+    /// across the discontinuity.
+    pub(super) fn seek_rel(&mut self, secs: f64) {
+        self.spectrum.clear();
+        self.engine.send(TransportCmd::SeekRel(secs));
+    }
+
+    fn seek_to(&mut self, frac: f64) {
         let dur = self.engine.duration_secs();
         if dur > 0.0 {
-            self.engine.send(TransportCmd::SeekTo(frac * dur));
+            self.seek_to_secs(frac * dur);
         }
+    }
+
+    /// Absolute seek; clears the spectrum (see `seek_rel`).
+    pub(super) fn seek_to_secs(&mut self, secs: f64) {
+        self.spectrum.clear();
+        self.engine.send(TransportCmd::SeekTo(secs));
     }
 
     /// Visible-list index for a click at (col,row) inside the tree panel.

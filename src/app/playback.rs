@@ -13,6 +13,7 @@ impl App {
             return;
         }
         self.engine.send(TransportCmd::Open(path.clone()));
+        self.spectrum.clear();
         self.now_playing = Some(path.clone());
         // Open will flip the engine to playing; arm end-of-track detection.
         self.prev_playing = true;

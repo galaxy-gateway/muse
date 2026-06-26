@@ -76,7 +76,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  click/drag bar   seek / scrub the playhead"),
         Line::from("  media keys       play/pause/next/prev (OS)"),
         Line::from("  - / +            volume down / up"),
-        Line::from("  v / V            cycle scope preset (saved)"),
+        Line::from("  v / V            cycle visualizer preset (saved)"),
         Line::from(format!(
             "  t                theme picker — {} (saved)",
             t.name
