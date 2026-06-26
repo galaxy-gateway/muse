@@ -19,7 +19,11 @@ pub(super) fn draw_transport(f: &mut Frame, app: &App, area: Rect) {
     } else {
         0.0
     };
-    let state = if app.engine.is_playing() { "▶" } else { "⏸" };
+    let state = if app.engine.is_playing() {
+        "▶"
+    } else {
+        "⏸"
+    };
     let vol = (app.engine.volume() * 100.0) as u32;
 
     let title = app

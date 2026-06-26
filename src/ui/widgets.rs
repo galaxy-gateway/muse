@@ -22,7 +22,12 @@ pub(super) fn panel<'a>(title: &'a str, accent: Color) -> Block<'a> {
 
 /// A panel with its relevant key hints docked into the bottom-right border, so
 /// the controls are always visible without opening the help overlay.
-pub(super) fn panel_hint<'a>(title: &'a str, accent: Color, hint: &'a str, dim: Color) -> Block<'a> {
+pub(super) fn panel_hint<'a>(
+    title: &'a str,
+    accent: Color,
+    hint: &'a str,
+    dim: Color,
+) -> Block<'a> {
     panel(title, accent).title_bottom(
         Line::from(Span::styled(format!(" {hint} "), Style::default().fg(dim))).right_aligned(),
     )

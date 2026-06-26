@@ -20,7 +20,11 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
         .iter()
         .map(|th| {
             let swatch = |c| Span::styled("██", Style::default().fg(c));
-            let tag = if th.effect.is_animated() { "✦ " } else { "  " };
+            let tag = if th.effect.is_animated() {
+                "✦ "
+            } else {
+                "  "
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:<11}", th.name), Style::default().fg(th.media)),
                 Span::styled(tag, Style::default().fg(t.dim)),
