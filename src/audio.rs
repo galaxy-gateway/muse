@@ -1,0 +1,424 @@
+//! Audio spine: decode (symphonia, ffmpeg fallback) -> rtrb ring -> cpal output,
+//! with a triple_buffer tap in the cpal callback feeding the live oscilloscope.
+//!
+//! The cpal callback is the single source of truth for "what is audible now": it
+//! pulls PCM from the ring and copies the same block into the scope buffer, so the
+//! visualization is sample-synced to the DAC. No locks/allocations on that path.
+
+use std::fs::File;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use anyhow::{anyhow, Result};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use crossbeam_channel::{bounded, Receiver, Sender};
+
+/// Samples in the live-scope window (mono). 2048 ~ 46ms at 44.1k.
+pub const SCOPE_LEN: usize = 2048;
+
+/// Commands sent from the UI thread to the decode thread.
+pub enum TransportCmd {
+    Open(PathBuf),
+    Toggle,
+    #[allow(dead_code)] // used by later phases (auto-advance, compare A/B)
+    Pause,
+    #[allow(dead_code)]
+    Play,
+    SeekRel(f64),
+    VolRel(f32),
+}
+
+/// Fully decoded track: interleaved **stereo** f32 at `sample_rate`.
+pub struct DecodedAudio {
+    pub sample_rate: u32,
+    pub samples: Vec<f32>,
+}
+
+impl DecodedAudio {
+    pub fn frames(&self) -> usize {
+        self.samples.len() / 2
+    }
+}
+
+/// Owns the cpal stream (kept alive) and the handles the UI reads each frame.
+pub struct AudioEngine {
+    cmd_tx: Sender<TransportCmd>,
+    scope_out: triple_buffer::Output<Vec<f32>>,
+    device_sr: u32,
+    pos_frames: Arc<AtomicU64>,
+    dur_frames: Arc<AtomicU64>,
+    playing: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>, // f32 bits
+    _stream: cpal::Stream,  // !Send: AudioEngine must stay on the UI thread
+}
+
+impl AudioEngine {
+    pub fn new() -> Result<Self> {
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| anyhow!("no default output device"))?;
+        let config = device.default_output_config()?;
+        let device_sr = config.sample_rate();
+        let out_channels = config.channels() as usize;
+
+        // ~250ms stereo ring between decode and DAC.
+        let ring_cap = (device_sr as usize / 4) * 2;
+        let (producer, mut consumer) = rtrb::RingBuffer::<f32>::new(ring_cap);
+
+        let (scope_in, scope_out) = triple_buffer::TripleBuffer::new(&vec![0f32; SCOPE_LEN]).split();
+        let mut scope_in = scope_in;
+
+        let pos_frames = Arc::new(AtomicU64::new(0));
+        let dur_frames = Arc::new(AtomicU64::new(0));
+        let playing = Arc::new(AtomicBool::new(false));
+        let volume = Arc::new(AtomicU32::new(0.8f32.to_bits()));
+
+        // --- cpal output callback (real-time thread) ------------------------
+        let vol_cb = volume.clone();
+        let mut scope_ring = vec![0f32; SCOPE_LEN];
+        let mut block: Vec<f32> = Vec::with_capacity(8192);
+        let err_fn = |e| eprintln!("cpal stream error: {e}");
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_output_stream(
+                config.into(),
+                move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed));
+                    block.clear();
+                    for frame in out.chunks_mut(out_channels) {
+                        let l = consumer.pop().unwrap_or(0.0) * vol;
+                        let r = consumer.pop().unwrap_or(l) * vol;
+                        if out_channels == 1 {
+                            frame[0] = 0.5 * (l + r);
+                        } else {
+                            frame[0] = l;
+                            frame[1] = r;
+                            for s in frame.iter_mut().skip(2) {
+                                *s = 0.0;
+                            }
+                        }
+                        block.push(0.5 * (l + r));
+                    }
+                    // fold this block into the rolling scope window, then publish
+                    let n = block.len();
+                    if n >= SCOPE_LEN {
+                        scope_ring.copy_from_slice(&block[n - SCOPE_LEN..]);
+                    } else if n > 0 {
+                        scope_ring.rotate_left(n);
+                        scope_ring[SCOPE_LEN - n..].copy_from_slice(&block);
+                    }
+                    scope_in.input_buffer_mut().copy_from_slice(&scope_ring);
+                    scope_in.publish();
+                },
+                err_fn,
+                None,
+            )?,
+            other => return Err(anyhow!("unsupported sample format: {other:?}")),
+        };
+        stream.play()?;
+
+        // --- decode thread --------------------------------------------------
+        let (cmd_tx, cmd_rx) = bounded::<TransportCmd>(64);
+        {
+            let playing = playing.clone();
+            let volume = volume.clone();
+            let pos_frames = pos_frames.clone();
+            let dur_frames = dur_frames.clone();
+            thread::spawn(move || {
+                decode_loop(
+                    cmd_rx, producer, device_sr, playing, volume, pos_frames, dur_frames,
+                );
+            });
+        }
+
+        Ok(Self {
+            cmd_tx,
+            scope_out,
+            device_sr,
+            pos_frames,
+            dur_frames,
+            playing,
+            volume,
+            _stream: stream,
+        })
+    }
+
+    pub fn send(&self, cmd: TransportCmd) {
+        let _ = self.cmd_tx.send(cmd);
+    }
+
+    /// Latest mono scope window (most recent at the end).
+    pub fn scope(&mut self) -> &[f32] {
+        self.scope_out.read()
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playing.load(Ordering::Relaxed)
+    }
+
+    pub fn position_secs(&self) -> f64 {
+        self.pos_frames.load(Ordering::Relaxed) as f64 / self.device_sr as f64
+    }
+
+    pub fn duration_secs(&self) -> f64 {
+        self.dur_frames.load(Ordering::Relaxed) as f64 / self.device_sr as f64
+    }
+
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+}
+
+/// Decode-thread main loop: owns the current track in memory and feeds the ring.
+fn decode_loop(
+    cmd_rx: Receiver<TransportCmd>,
+    mut producer: rtrb::Producer<f32>,
+    device_sr: u32,
+    playing: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>,
+    pos_frames: Arc<AtomicU64>,
+    dur_frames: Arc<AtomicU64>,
+) {
+    let mut audio: Option<DecodedAudio> = None;
+    let mut cursor: usize = 0; // frame index into the current track
+
+    loop {
+        // Drain all pending commands first.
+        let mut got_cmd = false;
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            got_cmd = true;
+            match cmd {
+                TransportCmd::Open(path) => match load_track(&path, device_sr) {
+                    Ok(dec) => {
+                        dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
+                        cursor = 0;
+                        pos_frames.store(0, Ordering::Relaxed);
+                        audio = Some(dec);
+                        playing.store(true, Ordering::Relaxed);
+                    }
+                    Err(e) => eprintln!("decode failed for {}: {e}", path.display()),
+                },
+                TransportCmd::Toggle => {
+                    let p = !playing.load(Ordering::Relaxed);
+                    playing.store(p, Ordering::Relaxed);
+                }
+                TransportCmd::Pause => playing.store(false, Ordering::Relaxed),
+                TransportCmd::Play => playing.store(true, Ordering::Relaxed),
+                TransportCmd::SeekRel(secs) => {
+                    if let Some(a) = &audio {
+                        let delta = (secs * device_sr as f64) as i64;
+                        let nc = (cursor as i64 + delta).clamp(0, a.frames() as i64);
+                        cursor = nc as usize;
+                        pos_frames.store(cursor as u64, Ordering::Relaxed);
+                    }
+                }
+                TransportCmd::VolRel(d) => {
+                    let v = (f32::from_bits(volume.load(Ordering::Relaxed)) + d).clamp(0.0, 1.0);
+                    volume.store(v.to_bits(), Ordering::Relaxed);
+                }
+            }
+        }
+
+        let active = playing.load(Ordering::Relaxed);
+        if let (true, Some(a)) = (active, &audio) {
+            let total = a.frames();
+            let mut pushed = false;
+            // Push until the ring is full or the track ends.
+            while cursor < total {
+                if producer.slots() < 2 {
+                    break;
+                }
+                let l = a.samples[cursor * 2];
+                let r = a.samples[cursor * 2 + 1];
+                if producer.push(l).is_err() {
+                    break;
+                }
+                let _ = producer.push(r);
+                cursor += 1;
+                pushed = true;
+            }
+            if pushed {
+                pos_frames.store(cursor as u64, Ordering::Relaxed);
+            }
+            if cursor >= total {
+                playing.store(false, Ordering::Relaxed);
+            }
+            thread::sleep(Duration::from_millis(3));
+        } else if !got_cmd {
+            thread::sleep(Duration::from_millis(8));
+        }
+    }
+}
+
+/// Decode a file to interleaved stereo at the device sample rate.
+fn load_track(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
+    let dec = decode_symphonia(path).or_else(|_| decode_ffmpeg(path))?;
+    if dec.sample_rate == device_sr {
+        Ok(dec)
+    } else {
+        let samples = resample_stereo(&dec.samples, dec.sample_rate, device_sr);
+        Ok(DecodedAudio {
+            sample_rate: device_sr,
+            samples,
+        })
+    }
+}
+
+fn decode_symphonia(path: &Path) -> Result<DecodedAudio> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymErr;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let file = File::open(path)?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| anyhow!("no default track"))?
+        .clone();
+    let track_id = track.id;
+    let sr = track.codec_params.sample_rate.unwrap_or(44100);
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+
+    let mut out: Vec<f32> = Vec::new();
+    let mut sbuf: Option<SampleBuffer<f32>> = None;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let ch = decoded.spec().channels.count();
+                if sbuf.is_none() {
+                    let spec = *decoded.spec();
+                    sbuf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+                }
+                let sb = sbuf.as_mut().unwrap();
+                sb.copy_interleaved_ref(decoded);
+                let samples = sb.samples();
+                match ch {
+                    1 => {
+                        for &m in samples {
+                            out.push(m);
+                            out.push(m);
+                        }
+                    }
+                    2 => out.extend_from_slice(samples),
+                    n => {
+                        for frame in samples.chunks(n) {
+                            let l = frame[0];
+                            let r = frame.get(1).copied().unwrap_or(l);
+                            out.push(l);
+                            out.push(r);
+                        }
+                    }
+                }
+            }
+            Err(SymErr::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    if out.is_empty() {
+        return Err(anyhow!("symphonia decoded no audio"));
+    }
+    Ok(DecodedAudio {
+        sample_rate: sr,
+        samples: out,
+    })
+}
+
+fn decode_ffmpeg(path: &Path) -> Result<DecodedAudio> {
+    let sr = 48000u32;
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-f", "f32le", "-ac", "2", "-ar", "48000", "-"])
+        .output()?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let mut samples = Vec::with_capacity(out.stdout.len() / 4);
+    for c in out.stdout.chunks_exact(4) {
+        samples.push(f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    }
+    if samples.is_empty() {
+        return Err(anyhow!("ffmpeg produced no audio"));
+    }
+    Ok(DecodedAudio {
+        sample_rate: sr,
+        samples,
+    })
+}
+
+/// Cheap linear-interpolation resampler for interleaved stereo.
+fn resample_stereo(input: &[f32], from: u32, to: u32) -> Vec<f32> {
+    if from == to || input.is_empty() {
+        return input.to_vec();
+    }
+    let frames = input.len() / 2;
+    let ratio = to as f64 / from as f64;
+    let out_frames = (frames as f64 * ratio) as usize;
+    let mut out = Vec::with_capacity(out_frames * 2);
+    for i in 0..out_frames {
+        let src = i as f64 / ratio;
+        let idx = src.floor() as usize;
+        let frac = (src - idx as f64) as f32;
+        let i0 = idx.min(frames - 1);
+        let i1 = (idx + 1).min(frames - 1);
+        for ch in 0..2 {
+            let a = input[i0 * 2 + ch];
+            let b = input[i1 * 2 + ch];
+            out.push(a + (b - a) * frac);
+        }
+    }
+    out
+}
+
+/// Compute `n_bins` (min,max) mono peak bins for a whole file (static waveform).
+pub fn waveform_bins(path: &Path, n_bins: usize) -> Result<Vec<(f32, f32)>> {
+    let dec = decode_symphonia(path).or_else(|_| decode_ffmpeg(path))?;
+    let frames = dec.frames();
+    if frames == 0 {
+        return Ok(vec![(0.0, 0.0); n_bins]);
+    }
+    let mut bins = Vec::with_capacity(n_bins);
+    let per = (frames as f64 / n_bins as f64).max(1.0);
+    for b in 0..n_bins {
+        let start = (b as f64 * per) as usize;
+        let end = (((b + 1) as f64 * per) as usize).min(frames);
+        let (mut lo, mut hi) = (0.0f32, 0.0f32);
+        for f in start..end {
+            let m = 0.5 * (dec.samples[f * 2] + dec.samples[f * 2 + 1]);
+            lo = lo.min(m);
+            hi = hi.max(m);
+        }
+        bins.push((lo, hi));
+    }
+    Ok(bins)
+}

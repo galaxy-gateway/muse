@@ -1,0 +1,21 @@
+[package]
+name = "muse"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+cpal = "0.18.1"
+crossbeam-channel = "0.5.15"
+crossterm = "0.28"
+directories = "6.0.0"
+ignore = "0.4.26"
+lofty = "0.24.0"
+ratatui = "0.29"
+rtrb = "0.3.4"
+rubato = "3.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
+symphonia = { version = "0.5.4", features = ["mp3", "flac", "wav", "ogg", "vorbis", "isomp4", "aac", "alac", "pcm"] }
+thiserror = "2.0.18"
+toml = "1.1.2"
+triple_buffer = "9.0.0"
