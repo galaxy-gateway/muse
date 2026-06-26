@@ -19,7 +19,7 @@ use souvlaki::MediaControls;
 
 use crate::audio::AudioEngine;
 use crate::config::{
-    SCOPE_PRESETS, ScopePreset, Settings, THEMES, Theme, load_settings, save_settings,
+    SCOPE_PRESETS, ScopePreset, ScopeStyle, Settings, THEMES, Theme, load_settings, save_settings,
 };
 use crate::effects::FrameCtx;
 use crate::event::AppEvent;
@@ -248,10 +248,14 @@ impl App {
             AppEvent::Media(e) => self.on_media(e),
             AppEvent::Tick => {
                 self.scope_buf.copy_from_slice(self.engine.scope());
-                if self.engine.is_playing() {
-                    self.spectrum.update_scope(&self.scope_buf);
-                } else {
-                    self.spectrum.decay();
+                // Only run the FFT when the spectrum visualizer is the active
+                // preset — it is the sole reader of the band state.
+                if self.scope_preset().style == ScopeStyle::Spectrum {
+                    if self.engine.is_playing() {
+                        self.spectrum.update_scope(&self.scope_buf);
+                    } else {
+                        self.spectrum.decay();
+                    }
                 }
                 self.check_track_end();
                 self.sync_media_playback();
@@ -288,6 +292,7 @@ impl App {
             .list_state
             .selected()
             .map(|s| s.saturating_sub(self.list_state.offset()) as u16);
+        let cursor_index = self.list_state.selected().map(|s| s as u32);
         let (dur, pos, playing) = (
             self.engine.duration_secs(),
             self.engine.position_secs(),
@@ -305,6 +310,7 @@ impl App {
             hover: self.hover,
             scope_peak,
             cursor_row,
+            cursor_index,
             play_frac,
         }
     }

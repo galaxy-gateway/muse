@@ -13,7 +13,7 @@ use ratatui::widgets::{Padding, Paragraph, Wrap};
 
 use super::widgets::{border, panel, panel_hint};
 use crate::app::App;
-use crate::color::rgb_of;
+use crate::color::mix;
 use crate::config::{ScopeMode, ScopeStyle, Theme};
 use crate::util::{fmt_time, fmt_time_precise};
 
@@ -335,6 +335,8 @@ fn draw_scope(f: &mut Frame, app: &App, area: Rect) {
                         color: t.scope,
                     });
                 }
+                // Spectrum is rendered by draw_spectrum via the early return at
+                // the top of draw_scope; this arm is never reached.
                 ScopeStyle::Spectrum => {}
             }
         });
@@ -421,24 +423,21 @@ fn spectrum_color(theme: &Theme, value: f32) -> Color {
     } else {
         (theme.scope, theme.playing, (value - 0.5) * 2.0)
     };
-    let (ar, ag, ab) = rgb_of(a);
-    let (br, bg, bb) = rgb_of(b);
-    let t = t.clamp(0.0, 1.0) as f64;
-    Color::Rgb(
-        (ar + (br - ar) * t) as u8,
-        (ag + (bg - ag) * t) as u8,
-        (ab + (bb - ab) * t) as u8,
-    )
+    mix(a, b, t as f64)
 }
 
-/// Linearly interpolate the band array across the available sub-columns.
+/// Magnitude for one sub-column: the peak over the band span it covers. Taking
+/// the max (rather than point-sampling) means a narrow spectral line is never
+/// dropped when there are fewer sub-columns than bands on a narrow panel.
 fn spectrum_value_at(bands: &[f32], sub_x: usize, sub_cols: usize) -> f32 {
-    if bands.len() == 1 || sub_cols == 1 {
+    let n = bands.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if sub_cols <= 1 {
         return bands[0];
     }
-    let pos = sub_x as f32 * (bands.len() - 1) as f32 / (sub_cols - 1) as f32;
-    let i0 = pos.floor() as usize;
-    let i1 = (i0 + 1).min(bands.len() - 1);
-    let frac = pos - i0 as f32;
-    bands[i0] + (bands[i1] - bands[i0]) * frac
+    let lo = sub_x * n / sub_cols;
+    let hi = ((sub_x + 1) * n).div_ceil(sub_cols).clamp(lo + 1, n);
+    bands[lo..hi].iter().copied().fold(0.0, f32::max)
 }

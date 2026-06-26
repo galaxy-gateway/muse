@@ -41,6 +41,9 @@ pub struct FrameCtx {
     pub scope_peak: f32,
     /// Selection's visible row within the tree's inner area (sel - scroll), if any.
     pub cursor_row: Option<u16>,
+    /// Absolute selected list index — seeds nav-burst RNG so the scatter pattern
+    /// is stable per item regardless of scroll offset.
+    pub cursor_index: Option<u32>,
     /// Playhead fraction (0..1) when a track is playing, else `None`.
     pub play_frac: Option<f64>,
 }
@@ -114,11 +117,12 @@ pub(crate) fn nav_sparks(sim: &mut ParticleSim, ctx: &FrameCtx, dir: f32) {
         return;
     }
     let vis = ctx.cursor_row.unwrap_or(0);
+    let idx = ctx.cursor_index.unwrap_or(0);
     let y = (r.y + 1 + vis).min(r.y + r.height - 2) as f32;
     let base_x = (r.x + 1) as f32;
     let span = r.width.saturating_sub(2).max(1) as u32;
     for i in 0..18u32 {
-        let seed = noise(ctx.frame as u32, i + vis as u32 * 7);
+        let seed = noise(ctx.frame as u32, i + idx * 7);
         let vx = ((seed % 7) as f32 - 3.0) * 0.12;
         let vy = dir * (0.4 + (seed % 3) as f32 * 0.18);
         sim.push(Spark {
