@@ -56,6 +56,18 @@ pub fn scale(base: Color, f: f64) -> Color {
     Color::Rgb((r * f) as u8, (g * f) as u8, (b * f) as u8)
 }
 
+/// Linear blend from `a` to `b` at `t` (clamped to 0..1).
+pub fn mix(a: Color, b: Color, t: f64) -> Color {
+    let (ar, ag, ab) = rgb_of(a);
+    let (br, bg, bb) = rgb_of(b);
+    let t = t.clamp(0.0, 1.0);
+    Color::Rgb(
+        (ar + (br - ar) * t) as u8,
+        (ag + (bg - ag) * t) as u8,
+        (ab + (bb - ab) * t) as u8,
+    )
+}
+
 pub const TRANS_STOPS: &[(f64, f64, f64)] = &[
     (91.0, 206.0, 250.0),
     (245.0, 169.0, 184.0),
