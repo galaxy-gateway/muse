@@ -1,0 +1,269 @@
+//! Left column: the file-explorer tree (or flat fuzzy results) and the selection
+//! detail panel above it.
+
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Padding, Paragraph, Wrap};
+
+use super::widgets::{border, panel};
+use crate::app::App;
+use crate::color::rgb_of;
+use crate::util::{fmt_size, fmt_time};
+
+pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
+    app.tree_rect = area;
+    let t = &app.theme;
+    let bc = border(t, app.frame, t.accent, 0.0);
+    let filtering = app.filtering || !app.filter.is_empty();
+    let yellow = Color::Rgb(0xf1, 0xfa, 0x8c);
+    // Title: plain "muse", or "muse /<filter>  esc" with a yellow esc cue.
+    let title_line = if filtering {
+        Line::from(vec![
+            Span::styled(
+                " muse ",
+                Style::default().fg(bc).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "/",
+                Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{}  ", app.filter),
+                Style::default().fg(t.media).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "esc ",
+                Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Line::from(Span::styled(
+            " muse ",
+            Style::default().fg(bc).add_modifier(Modifier::BOLD),
+        ))
+    };
+    let hint = if filtering {
+        Line::from(vec![
+            Span::styled(
+                " esc ",
+                Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("cancel · ⏎ apply ", Style::default().fg(t.dim)),
+        ])
+    } else {
+        Line::from(Span::styled(
+            " j/k move · l/h fold · g/G ends · / filter ",
+            Style::default().fg(t.dim),
+        ))
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(bc))
+        .title(title_line)
+        .title_bottom(hint.right_aligned());
+    let hs = app.tree_hscroll as usize;
+    let hover_idx = app.hover.and_then(|(c, r)| app.tree_row_at(c, r));
+    let hover_bg = brighten(t.bg_sel, 0x1a);
+    let finish = |idx: usize, spans: Vec<Span<'static>>| -> ListItem<'static> {
+        let item = ListItem::new(Line::from(trim_spans_left(spans, hs)));
+        if Some(idx) == hover_idx {
+            item.style(Style::default().bg(hover_bg))
+        } else {
+            item
+        }
+    };
+    let items: Vec<ListItem> = if filtering {
+        // Flat fuzzy results: relative paths to matching media files.
+        let root = app.root_path();
+        app.filtered
+            .iter()
+            .enumerate()
+            .map(|(idx, p)| {
+                let rel = p
+                    .strip_prefix(&root)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .into_owned();
+                let playing = app.now_playing.as_deref() == Some(p.as_path());
+                let (icon, color) = if playing {
+                    ("♪ ", t.playing)
+                } else {
+                    ("· ", t.media)
+                };
+                let mut style = Style::default().fg(color);
+                if playing {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                finish(
+                    idx,
+                    vec![
+                        Span::styled(icon, Style::default().fg(color)),
+                        Span::styled(rel, style),
+                    ],
+                )
+            })
+            .collect()
+    } else {
+        app.tree
+            .visible
+            .iter()
+            .enumerate()
+            .map(|(idx, &id)| {
+                let n = app.tree.node(id);
+                let indent = "  ".repeat(n.depth.saturating_sub(1));
+                let playing = app.now_playing.as_deref() == Some(n.path.as_path());
+                let (icon, color) = if n.is_dir {
+                    (if n.expanded { "▾ " } else { "▸ " }, t.dir)
+                } else if playing {
+                    ("♪ ", t.playing)
+                } else {
+                    ("· ", t.media)
+                };
+                let mut style = Style::default().fg(color);
+                if playing {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                let meta = if n.is_dir {
+                    let items = format!("{} track{}", n.count, if n.count == 1 { "" } else { "s" });
+                    if n.size > 0 {
+                        format!("  {items} · {}", fmt_size(n.size))
+                    } else {
+                        format!("  {items}")
+                    }
+                } else if n.size > 0 {
+                    format!("  {}", fmt_size(n.size))
+                } else {
+                    String::new()
+                };
+                finish(
+                    idx,
+                    vec![
+                        Span::raw(indent),
+                        Span::styled(
+                            icon,
+                            Style::default().fg(if n.is_dir { t.accent2 } else { color }),
+                        ),
+                        Span::styled(n.name.clone(), style),
+                        Span::styled(meta, Style::default().fg(t.dim)),
+                    ],
+                )
+            })
+            .collect()
+    };
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(t.bg_sel)
+                .fg(t.accent)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▌");
+    f.render_stateful_widget(list, area, &mut app.list_state);
+}
+
+pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let path = app.cursor_path();
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(path) = &path {
+        if let Some(m) = app.meta_cache.get(path) {
+            let title = if m.title.is_empty() {
+                path.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            } else {
+                m.title.clone()
+            };
+            let mut titleline = vec![Span::styled(
+                title,
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            )];
+            if m.duration > 0.0 {
+                titleline.push(Span::styled(
+                    format!("   {}", fmt_time(m.duration)),
+                    Style::default().fg(t.dim),
+                ));
+            }
+            lines.push(Line::from(titleline));
+            let kv = |k: &str, v: &str| {
+                Line::from(vec![
+                    Span::styled(format!("{k:<8}"), Style::default().fg(t.dim)),
+                    Span::styled(v.to_string(), Style::default().fg(t.media)),
+                ])
+            };
+            if !m.artist.is_empty() {
+                lines.push(kv("artist", &m.artist));
+            }
+            if !m.album.is_empty() {
+                lines.push(kv("album", &m.album));
+            }
+            if !m.genre.is_empty() {
+                lines.push(kv("genre", &m.genre));
+            }
+            let extra: Vec<String> = m.fields.iter().map(|(k, v)| format!("{k} {v}")).collect();
+            if !extra.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    extra.join("  ·  "),
+                    Style::default().fg(t.dim),
+                )));
+            }
+        } else if app.registry.is_supported(path) {
+            lines.push(Line::from(Span::styled(
+                "reading tags…",
+                Style::default().fg(t.dim),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                path.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                Style::default().fg(t.media),
+            )));
+        }
+    }
+    let p = Paragraph::new(lines)
+        .block(
+            panel("selection", border(t, app.frame, t.accent2, 0.14))
+                .padding(Padding::horizontal(1)),
+        )
+        .wrap(Wrap { trim: true });
+    f.render_widget(p, area);
+}
+
+/// Lighten a color by adding `d` to each channel (for the hover row tint).
+fn brighten(c: Color, d: u8) -> Color {
+    let (r, g, b) = rgb_of(c);
+    Color::Rgb(
+        (r as u8).saturating_add(d),
+        (g as u8).saturating_add(d),
+        (b as u8).saturating_add(d),
+    )
+}
+
+/// Drop the first `n` display columns from a line of spans (horizontal scroll).
+fn trim_spans_left(spans: Vec<Span<'static>>, mut n: usize) -> Vec<Span<'static>> {
+    if n == 0 {
+        return spans;
+    }
+    let mut out = Vec::with_capacity(spans.len());
+    for sp in spans {
+        if n == 0 {
+            out.push(sp);
+            continue;
+        }
+        let len = sp.content.chars().count();
+        if len <= n {
+            n -= len;
+            continue;
+        }
+        let s: String = sp.content.chars().skip(n).collect();
+        n = 0;
+        out.push(Span::styled(s, sp.style));
+    }
+    out
+}

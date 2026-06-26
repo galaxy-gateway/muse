@@ -2,10 +2,14 @@
 
 mod app;
 mod audio;
+mod color;
 mod config;
+mod effects;
 mod event;
 mod media;
 mod model;
+mod particles;
+mod spectrum;
 mod ui;
 mod util;
 

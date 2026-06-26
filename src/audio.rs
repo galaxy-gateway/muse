@@ -178,6 +178,10 @@ impl AudioEngine {
         self.dur_frames.load(Ordering::Relaxed) as f64 / self.device_sr as f64
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.device_sr
+    }
+
     pub fn volume(&self) -> f32 {
         f32::from_bits(self.volume.load(Ordering::Relaxed))
     }

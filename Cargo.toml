@@ -1,6 +1,6 @@
 [package]
 name = "muse"
-version = "0.6.0"
+version = "0.8.0"
 edition = "2024"
 
 [dependencies]
@@ -14,6 +14,7 @@ lofty = "0.24.0"
 ratatui = "0.29"
 rtrb = "0.3.4"
 rubato = "3.0.0"
+rustfft = "6.4.1"
 serde = { version = "1.0.228", features = ["derive"] }
 souvlaki = "0.8.3"
 symphonia = { version = "0.5.4", features = ["mp3", "flac", "wav", "ogg", "vorbis", "isomp4", "aac", "alac", "pcm"] }

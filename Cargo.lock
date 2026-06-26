@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "muse"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -917,6 +917,7 @@ dependencies = [
  "ratatui",
  "rtrb",
  "rubato",
+ "rustfft",
  "serde",
  "souvlaki",
  "symphonia",
