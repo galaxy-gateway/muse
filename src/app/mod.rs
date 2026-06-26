@@ -11,6 +11,7 @@ mod playback;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use ratatui::layout::Rect;
@@ -76,9 +77,17 @@ pub struct App {
 
     pub now_playing: Option<PathBuf>,
     pub loop_mode: LoopMode,
+    /// Held-nav acceleration: the last j/k/↑/↓ direction + when it fired, and how
+    /// many consecutive same-direction repeats have stacked. Drives `move_cursor_accel`.
+    pub(super) nav_last: Option<(i32, Instant)>,
+    pub(super) nav_streak: u32,
     /// Gapless cross-track playback: prefetch the predicted-next track so the
     /// decode thread can splice it in with no boundary gap. Persisted.
     pub gapless: bool,
+    /// Frame at which each panel's path was last copied to the clipboard, so its
+    /// copy button can flash a checkmark briefly. `None` = idle.
+    pub copy_flash_np: Option<u64>,
+    pub copy_flash_sel: Option<u64>,
     /// Previous engine play-state, to detect the end-of-track falling edge.
     pub(super) prev_playing: bool,
     pub scope_buf: Vec<f32>,
@@ -101,6 +110,8 @@ pub struct App {
     /// Now-playing panel rect (inspector's top row), recorded each render for
     /// the flag overlay.
     pub np_rect: Rect,
+    /// Selection detail panel rect (left column, top), for its copy button.
+    pub sel_rect: Rect,
     pub screen: Rect,
     /// While a left-drag started on a seek bar, the rect being scrubbed.
     pub(super) seeking_rect: Option<Rect>,
@@ -162,7 +173,11 @@ impl App {
             wave_gen: 0,
             now_playing: None,
             loop_mode: LoopMode::Off,
+            nav_last: None,
+            nav_streak: 0,
             gapless: settings.gapless.unwrap_or(true),
+            copy_flash_np: None,
+            copy_flash_sel: None,
             prev_playing: false,
             scope_buf: vec![0.0; crate::audio::SCOPE_LEN * 2],
             scope_idx,
@@ -176,6 +191,7 @@ impl App {
             tree_rect: Rect::default(),
             scope_rect: Rect::default(),
             np_rect: Rect::default(),
+            sel_rect: Rect::default(),
             screen: Rect::default(),
             seeking_rect: None,
             tree_hscroll: 0,
@@ -236,6 +252,27 @@ impl App {
                 .get(i)
                 .map(|&id| self.tree.node(id).path.clone())
         }
+    }
+
+    /// Exact text shown on the now-playing panel's title row (tag title, else
+    /// filename). `None` when nothing is playing. The copy button is positioned
+    /// from this string's width, so it must match what `draw_now_playing` renders.
+    pub fn now_playing_title_text(&self) -> Option<String> {
+        let p = self.now_playing.as_ref()?;
+        Some(tag_title_or_filename(self.meta_cache.get(p), p))
+    }
+
+    /// Exact text on the selection panel's title row — mirrors `draw_selection`:
+    /// tag title, else "reading tags…" while a supported file's tags load, else
+    /// the filename. `None` when the cursor has no path.
+    pub fn selection_title_text(&self) -> Option<String> {
+        let p = self.cursor_path()?;
+        Some(match self.meta_cache.get(&p) {
+            Some(m) if !m.title.is_empty() => m.title.clone(),
+            Some(_) => file_name_str(&p),
+            None if self.registry.is_supported(&p) => "reading tags…".to_string(),
+            None => file_name_str(&p),
+        })
     }
 
     pub(super) fn list_len(&self) -> usize {
@@ -325,4 +362,19 @@ impl App {
             play_frac,
         }
     }
+}
+
+/// A file's final path component as a lossy `String` (empty if it has none).
+fn file_name_str(p: &Path) -> String {
+    p.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Tag title if present and non-empty, else the filename — the now-playing
+/// title-row text.
+fn tag_title_or_filename(meta: Option<&crate::media::Meta>, p: &Path) -> String {
+    meta.filter(|m| !m.title.is_empty())
+        .map(|m| m.title.clone())
+        .unwrap_or_else(|| file_name_str(p))
 }

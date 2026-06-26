@@ -7,6 +7,9 @@ use ratatui::layout::Rect;
 use super::App;
 use crate::audio::TransportCmd;
 
+/// Frames the copy button shows a checkmark after a successful copy (~1.5s@60Hz).
+pub const COPY_FLASH_FRAMES: u64 = 90;
+
 impl App {
     /// Mouse handling: left-press on the waveform/transport seeks (and a left
     /// drag scrubs); left-press on the tree selects the row and activates it
@@ -31,6 +34,15 @@ impl App {
                 // Every click triggers the theme's click interaction at the pointer.
                 let ctx = self.frame_ctx();
                 self.theme.effect.on_click(&mut self.sim, &ctx, col, row);
+                // Copy-path buttons in the selection / now-playing headers.
+                if hit(self.sel_copy_btn_rect(), col, row) {
+                    self.copy_selection_path();
+                    return;
+                }
+                if hit(self.np_copy_btn_rect(), col, row) {
+                    self.copy_now_playing_path();
+                    return;
+                }
                 // Seek bars take priority; start a scrub if pressed on one.
                 for rect in [self.wave_rect, self.transport_rect] {
                     if frac_in_rect(rect, col, row).is_some() {
@@ -76,6 +88,33 @@ impl App {
         self.engine.send(TransportCmd::SeekTo(secs));
     }
 
+    /// Screen rect of the now-playing copy-path button (right end of its title
+    /// row, which is the 2nd inner row: border, time, title). `None` when
+    /// nothing is playing or the panel is too small. Derived from `np_rect` so
+    /// the renderer and hit-test agree without a draw-time write-back.
+    pub fn np_copy_btn_rect(&self) -> Option<Rect> {
+        let name = self.now_playing_title_text()?;
+        copy_btn_after(self.np_rect, 2, name.chars().count())
+    }
+
+    /// Screen rect of the selection copy-path button (right end of its title
+    /// row, the 1st inner row). `None` when the cursor has no path or the panel
+    /// is too small.
+    pub fn sel_copy_btn_rect(&self) -> Option<Rect> {
+        let name = self.selection_title_text()?;
+        copy_btn_after(self.sel_rect, 1, name.chars().count())
+    }
+
+    /// Whether the now-playing copy button should show its "copied" checkmark.
+    pub fn np_copy_flashing(&self) -> bool {
+        flashing(self.copy_flash_np, self.frame)
+    }
+
+    /// Whether the selection copy button should show its "copied" checkmark.
+    pub fn sel_copy_flashing(&self) -> bool {
+        flashing(self.copy_flash_sel, self.frame)
+    }
+
     /// Visible-list index for a click at (col,row) inside the tree panel.
     pub fn tree_row_at(&self, col: u16, row: u16) -> Option<usize> {
         let r = self.tree_rect;
@@ -91,6 +130,40 @@ impl App {
         let idx = (row - (r.y + 1)) as usize + self.list_state.offset();
         (idx < self.list_len()).then_some(idx)
     }
+}
+
+/// Copy-button cell placed one space after the title text on a panel's title
+/// row, or `None` when the panel is too small. `title_row` is the title's offset
+/// from the panel top (1 = first inner row, 2 = second, …); `name_cols` is the
+/// title's display width. The panel has a 1-col border + 1-col padding, so text
+/// starts at `panel.x + 2`; the icon clamps to the last interior column for very
+/// long titles so it never lands on the border.
+fn copy_btn_after(panel: Rect, title_row: u16, name_cols: usize) -> Option<Rect> {
+    if panel.width < 6 || panel.height < title_row + 2 {
+        return None;
+    }
+    let text_x = panel.x + 2;
+    let last_inner = panel.x + panel.width - 2; // last col before the right border
+    let x = (text_x as usize + name_cols + 1).min(last_inner as usize) as u16;
+    Some(Rect {
+        x,
+        y: panel.y + title_row,
+        width: 1,
+        height: 1,
+    })
+}
+
+/// True while `stamp` is within the flash window of the current `frame`.
+fn flashing(stamp: Option<u64>, frame: u64) -> bool {
+    stamp
+        .map(|f0| frame.wrapping_sub(f0) < COPY_FLASH_FRAMES)
+        .unwrap_or(false)
+}
+
+/// Whether (col,row) lands inside an optional button rect.
+fn hit(rect: Option<Rect>, col: u16, row: u16) -> bool {
+    rect.map(|r| col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height)
+        .unwrap_or(false)
 }
 
 /// Seek fraction (0..1) for a press at (col,row) if it lands inside `r`'s

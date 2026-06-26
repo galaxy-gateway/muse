@@ -47,6 +47,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.transport_rect = root[1];
     app.scope_rect = inspector[2];
     app.np_rect = inspector[0];
+    app.sel_rect = left[0];
     app.screen = f.area();
 
     draw_selection(f, app, left[0]);

@@ -233,6 +233,9 @@ pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {
         )
         .wrap(Wrap { trim: true });
     f.render_widget(p, area);
+
+    // Copy-path button on the selection title row (first inner row).
+    super::inspector::draw_copy_button(f, app, app.sel_copy_btn_rect(), app.sel_copy_flashing());
 }
 
 /// Lighten a color by adding `d` to each channel (for the hover row tint).

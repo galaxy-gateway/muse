@@ -1,10 +1,21 @@
 //! Playback control: starting a track, walking the current view list for
 //! next/prev, and applying the loop mode at end-of-track.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{App, LoopMode};
 use crate::audio::TransportCmd;
+
+/// Copy `path`'s absolute form to the system clipboard. Returns whether it
+/// succeeded — a no-op-false when the clipboard is unavailable (headless / no
+/// display server).
+fn copy_path_to_clipboard(path: &Path) -> bool {
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = abs.to_string_lossy().into_owned();
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text))
+        .is_ok()
+}
 
 impl App {
     /// Start playback of `path` (if it's a supported media file).
@@ -85,6 +96,26 @@ impl App {
                     n.is_media.then(|| n.path.clone())
                 })
                 .collect()
+        }
+    }
+
+    /// Copy the absolute path of the now-playing track to the system clipboard
+    /// and flash the now-playing copy button's checkmark.
+    pub(super) fn copy_now_playing_path(&mut self) {
+        if let Some(p) = self.now_playing.clone()
+            && copy_path_to_clipboard(&p)
+        {
+            self.copy_flash_np = Some(self.frame);
+        }
+    }
+
+    /// Copy the absolute path of the cursor's selected file to the clipboard and
+    /// flash the selection copy button's checkmark.
+    pub(super) fn copy_selection_path(&mut self) {
+        if let Some(p) = self.cursor_path()
+            && copy_path_to_clipboard(&p)
+        {
+            self.copy_flash_sel = Some(self.frame);
         }
     }
 

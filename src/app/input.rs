@@ -2,12 +2,17 @@
 //! cursor movement, scope cycling, and the theme picker.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::App;
 use crate::audio::TransportCmd;
 use crate::config::{SCOPE_PRESETS, THEMES};
+
+/// Max gap between same-direction nav presses still counted as a held repeat.
+/// OS key-repeat fires well under this; deliberate taps fall outside it.
+const NAV_ACCEL_WINDOW: Duration = Duration::from_millis(200);
 
 impl App {
     pub(super) fn on_key(&mut self, key: KeyEvent) {
@@ -44,8 +49,8 @@ impl App {
                     Some(0)
                 });
             }
-            (KeyCode::Char('j'), _) | (KeyCode::Down, _) => self.move_cursor(1),
-            (KeyCode::Char('k'), _) | (KeyCode::Up, _) => self.move_cursor(-1),
+            (KeyCode::Char('j'), _) | (KeyCode::Down, _) => self.move_cursor_accel(1),
+            (KeyCode::Char('k'), _) | (KeyCode::Up, _) => self.move_cursor_accel(-1),
             (KeyCode::Char('g'), _) | (KeyCode::Home, _) => self.select(0),
             (KeyCode::Char('G'), _) | (KeyCode::End, _) => {
                 self.select(self.list_len().saturating_sub(1))
@@ -70,6 +75,8 @@ impl App {
                 self.preload_next();
                 self.persist();
             }
+            (KeyCode::Char('y'), _) => self.copy_selection_path(),
+            (KeyCode::Char('Y'), _) => self.copy_now_playing_path(),
             (KeyCode::Char('.'), _) => self.seek_rel(5.0),
             (KeyCode::Char(','), _) => self.seek_rel(-5.0),
             (KeyCode::Char('+'), _) | (KeyCode::Char('='), _) => {
@@ -140,6 +147,26 @@ impl App {
         self.list_state
             .select((!self.filtered.is_empty()).then_some(0));
         self.on_selection_changed();
+    }
+
+    /// Accelerated cursor move for held j/k/↑/↓: consecutive same-direction
+    /// presses inside `NAV_ACCEL_WINDOW` (i.e. OS key-repeat) ramp the step so a
+    /// long list scrolls quickly, while deliberate taps stay single-row.
+    pub(super) fn move_cursor_accel(&mut self, dir: i32) {
+        let now = Instant::now();
+        let held = matches!(
+            self.nav_last,
+            Some((d, t)) if d == dir && now.duration_since(t) <= NAV_ACCEL_WINDOW
+        );
+        self.nav_streak = if held { self.nav_streak + 1 } else { 0 };
+        self.nav_last = Some((dir, now));
+        let step = match self.nav_streak {
+            0..=3 => 1,
+            4..=7 => 2,
+            8..=12 => 4,
+            _ => 8,
+        };
+        self.move_cursor(dir * step);
     }
 
     pub(super) fn move_cursor(&mut self, delta: i32) {

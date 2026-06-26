@@ -12,8 +12,14 @@ const WAVE_BINS: usize = 1600;
 
 impl App {
     pub(super) fn expand(&mut self) {
-        let Some(id) = self.cursor() else { return };
+        // On a song — or in the flat fuzzy-result list, where there are no tree
+        // nodes to expand — treat l / → as a downward move, matching j / Down.
+        let Some(id) = self.cursor() else {
+            self.move_cursor(1);
+            return;
+        };
         if !self.tree.node(id).is_dir {
+            self.move_cursor(1);
             return;
         }
         self.tree.scan(id, &self.registry);

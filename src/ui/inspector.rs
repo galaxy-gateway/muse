@@ -103,6 +103,32 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
         )
         .wrap(Wrap { trim: true });
     f.render_widget(p, area);
+
+    // Copy-path button: right end of the title row. Overlaid after the
+    // paragraph so it sits on top of any long title text.
+    draw_copy_button(f, app, app.np_copy_btn_rect(), app.np_copy_flashing());
+}
+
+/// Overlay a copy-path button glyph at `btn`: a checkmark while flashing, an
+/// accent-bright copy glyph on hover, else dim. Shared by the now-playing and
+/// selection headers.
+pub(super) fn draw_copy_button(f: &mut Frame, app: &App, btn: Option<Rect>, flashing: bool) {
+    let Some(btn) = btn else { return };
+    let t = &app.theme;
+    let hovered = app
+        .hover
+        .map(|(c, r)| c >= btn.x && c < btn.x + btn.width && r == btn.y)
+        .unwrap_or(false);
+    let (glyph, color) = if flashing {
+        ("✓", t.playing)
+    } else if hovered {
+        ("⧉", t.accent)
+    } else {
+        ("⧉", t.dim)
+    };
+    let cell = &mut f.buffer_mut()[(btn.x + btn.width / 2, btn.y)];
+    cell.set_symbol(glyph);
+    cell.set_fg(color);
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport

@@ -71,6 +71,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  n / p            next / previous track"),
         Line::from("  r                loop mode (off / all / one)"),
         Line::from("  b                gapless playback on / off (saved)"),
+        Line::from("  y / Y or ⧉       copy selection / now-playing path"),
         Line::from("  , / .            seek -5s / +5s"),
         Line::from("  shift ← / →      scrub playhead -1s / +1s"),
         Line::from("  click tree       folder: fold · file: play"),
