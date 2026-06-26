@@ -1,5 +1,6 @@
 //! All rendering. Immediate-mode: reads `App`, draws, never mutates.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::symbols::Marker;
@@ -8,7 +9,6 @@ use ratatui::widgets::canvas::{Canvas, Context, Line as CLine};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, Gauge, List, ListItem, Padding, Paragraph, Wrap,
 };
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::util::fmt_time;
@@ -70,10 +70,26 @@ fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
             if playing {
                 style = style.add_modifier(Modifier::BOLD);
             }
+            let meta = if n.is_dir {
+                let items = format!("{} item{}", n.count, if n.count == 1 { "" } else { "s" });
+                if n.size > 0 {
+                    format!("  {items} · {}", crate::util::fmt_size(n.size))
+                } else {
+                    format!("  {items}")
+                }
+            } else if n.size > 0 {
+                format!("  {}", crate::util::fmt_size(n.size))
+            } else {
+                String::new()
+            };
             ListItem::new(Line::from(vec![
                 Span::raw(indent),
-                Span::styled(icon, Style::default().fg(if n.is_dir { t.accent2 } else { color })),
+                Span::styled(
+                    icon,
+                    Style::default().fg(if n.is_dir { t.accent2 } else { color }),
+                ),
                 Span::styled(n.name.clone(), style),
+                Span::styled(meta, Style::default().fg(t.dim)),
             ]))
         })
         .collect();
@@ -229,7 +245,12 @@ fn draw_waveform(f: &mut Frame, app: &App, area: Rect) {
         });
     f.render_widget(canvas, area);
 
-    if path.as_ref().map(|p| app.registry.is_supported(p)).unwrap_or(false) && bins.is_none() {
+    if path
+        .as_ref()
+        .map(|p| app.registry.is_supported(p))
+        .unwrap_or(false)
+        && bins.is_none()
+    {
         let hint = Paragraph::new(Span::styled("analyzing…", Style::default().fg(t.dim)));
         let inner = Rect {
             x: area.x + 2,
@@ -284,8 +305,16 @@ fn draw_transport(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     let pos = app.engine.position_secs();
     let dur = app.engine.duration_secs();
-    let ratio = if dur > 0.0 { (pos / dur).clamp(0.0, 1.0) } else { 0.0 };
-    let state = if app.engine.is_playing() { "▶" } else { "⏸" };
+    let ratio = if dur > 0.0 {
+        (pos / dur).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let state = if app.engine.is_playing() {
+        "▶"
+    } else {
+        "⏸"
+    };
     let vol = (app.engine.volume() * 100.0) as u32;
 
     let title = app

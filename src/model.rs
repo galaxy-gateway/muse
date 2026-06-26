@@ -16,6 +16,10 @@ pub struct Node {
     pub parent: Option<NodeId>,
     pub children: Option<Vec<NodeId>>, // None = unscanned dir
     pub expanded: bool,
+    /// For files: byte size. For dirs: summed size of immediate media files.
+    pub size: u64,
+    /// For dirs: count of immediate entries (subdirs + media files).
+    pub count: usize,
 }
 
 pub struct TreeModel {
@@ -39,6 +43,8 @@ impl TreeModel {
             parent: None,
             children: None,
             expanded: true,
+            size: 0,
+            count: 0,
         };
         let mut model = Self {
             nodes: vec![root_node],
@@ -57,7 +63,7 @@ impl TreeModel {
         }
         let dir = self.nodes[id].path.clone();
         let depth = self.nodes[id].depth + 1;
-        let mut entries: Vec<(PathBuf, bool)> = Vec::new();
+        let mut entries: Vec<(PathBuf, bool, u64)> = Vec::new();
         if let Ok(rd) = std::fs::read_dir(&dir) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -69,7 +75,12 @@ impl TreeModel {
                 }
                 // keep dirs and supported media files only
                 if is_dir || reg.is_supported(&p) {
-                    entries.push((p, is_dir));
+                    let size = if is_dir {
+                        0
+                    } else {
+                        e.metadata().map(|m| m.len()).unwrap_or(0)
+                    };
+                    entries.push((p, is_dir, size));
                 }
             }
         }
@@ -78,12 +89,20 @@ impl TreeModel {
                 .then_with(|| a.0.file_name().cmp(&b.0.file_name()))
         });
         let mut kids = Vec::with_capacity(entries.len());
-        for (path, is_dir) in entries {
+        for (path, is_dir, mut size) in entries {
             let name = path
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let is_media = !is_dir && reg.is_supported(&path);
+            // Shallow stats so collapsed dirs still show an indicator.
+            let count = if is_dir {
+                let (c, s) = Self::dir_stats(&path, reg);
+                size = s;
+                c
+            } else {
+                0
+            };
             let nid = self.nodes.len();
             self.nodes.push(Node {
                 path,
@@ -94,10 +113,37 @@ impl TreeModel {
                 parent: Some(id),
                 children: if is_dir { None } else { Some(Vec::new()) },
                 expanded: false,
+                size,
+                count,
             });
             kids.push(nid);
         }
         self.nodes[id].children = Some(kids);
+    }
+
+    /// Count immediate entries (subdirs + supported media) and sum immediate
+    /// media-file sizes for `dir`. One level deep; no recursion.
+    fn dir_stats(dir: &Path, reg: &Registry) -> (usize, u64) {
+        let mut count = 0;
+        let mut size = 0;
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                }
+                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                if is_dir {
+                    count += 1;
+                } else if reg.is_supported(&p) {
+                    count += 1;
+                    size += e.metadata().map(|m| m.len()).unwrap_or(0);
+                }
+            }
+        }
+        (count, size)
     }
 
     /// Recompute the flattened visible list. `filter` hides non-matching media files.
