@@ -48,6 +48,16 @@ sample-synced to the DAC. No locks or allocations on that path. The UI thread
 talks to it only through `TransportCmd` (open/toggle/seek/volume) and reads
 atomics (position, duration, playing, volume).
 
+A fourth audio-side thread, the **loader**, decodes the predicted-next track
+ahead of time (`AudioEngine::preload`) and hands the finished buffer to the
+decode thread. When a track ends and the UI Opens the next one, the decode
+thread switches to the preloaded buffer instantly — no decode latency — and the
+output ring is never cleared on Open, so the previous track's tail plays out and
+the next track's samples follow contiguously. That combination makes the
+boundary seamless (gapless). MP3 encoder delay/padding is trimmed per-clip via
+the LAME/Xing tag (`enable_gapless` + per-packet `trim_start`/`trim_end`), so
+`--nogap`-encoded albums join cleanly; lossless formats have no delay to trim.
+
 `main.rs` wires the channel, spawns the threads, and runs the loop: drain an
 event → `app.handle(ev)` → redraw (tick redraws are coalesced to ~60fps).
 

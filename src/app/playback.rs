@@ -23,6 +23,32 @@ impl App {
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
             self.request_waveform(path);
         }
+        // Decode the track auto-advance will play next, so its boundary is gapless.
+        self.preload_next();
+    }
+
+    /// Predict the next track (per loop mode + current view list) and ask the
+    /// engine to decode it ahead of time. Best-effort: if the prediction is
+    /// wrong (the user navigates away), the stale preload is simply discarded.
+    pub(super) fn preload_next(&self) {
+        let list = self.current_media();
+        if list.is_empty() {
+            return;
+        }
+        let cur = self
+            .now_playing
+            .as_ref()
+            .and_then(|p| list.iter().position(|x| x == p));
+        let next = match self.loop_mode {
+            LoopMode::One => self.now_playing.clone(),
+            LoopMode::All => cur.map(|i| list[(i + 1) % list.len()].clone()),
+            LoopMode::Off => cur.and_then(|i| list.get(i + 1).cloned()),
+        };
+        if let Some(n) = next {
+            if self.registry.is_supported(&n) {
+                self.engine.preload(n);
+            }
+        }
     }
 
     /// Ordered media paths in the current view (filtered results, else the

@@ -59,7 +59,11 @@ impl App {
             (KeyCode::Char(' '), _) => self.engine.send(TransportCmd::Toggle),
             (KeyCode::Char('n'), _) => self.play_relative(1),
             (KeyCode::Char('p'), _) => self.play_relative(-1),
-            (KeyCode::Char('r'), _) => self.loop_mode = self.loop_mode.next(),
+            (KeyCode::Char('r'), _) => {
+                self.loop_mode = self.loop_mode.next();
+                // The predicted-next track depends on the loop mode.
+                self.preload_next();
+            }
             (KeyCode::Char('.'), _) => self.seek_rel(5.0),
             (KeyCode::Char(','), _) => self.seek_rel(-5.0),
             (KeyCode::Char('+'), _) | (KeyCode::Char('='), _) => {

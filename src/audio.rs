@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 /// Frames in the live-scope window. 2048 ~ 46ms at 44.1k. The published scope
 /// buffer is interleaved **stereo**, so it holds `SCOPE_LEN * 2` samples (L,R…)
@@ -51,6 +51,9 @@ impl DecodedAudio {
 /// Owns the cpal stream (kept alive) and the handles the UI reads each frame.
 pub struct AudioEngine {
     cmd_tx: Sender<TransportCmd>,
+    /// Requests to the background loader thread to decode a track ahead of time
+    /// for gapless transitions.
+    load_tx: Sender<PathBuf>,
     scope_out: triple_buffer::Output<Vec<f32>>,
     device_sr: u32,
     pos_frames: Arc<AtomicU64>,
@@ -131,6 +134,24 @@ impl AudioEngine {
         };
         stream.play()?;
 
+        // --- background loader thread ---------------------------------------
+        // Decodes the predicted-next track ahead of time and hands the finished
+        // buffer to the decode thread, so an Open at a track boundary is instant
+        // (no decode latency → the output ring never underruns → gapless).
+        let (load_tx, load_rx) = unbounded::<PathBuf>();
+        let (loaded_tx, loaded_rx) = unbounded::<(PathBuf, DecodedAudio)>();
+        thread::spawn(move || {
+            while let Ok(mut path) = load_rx.recv() {
+                // Collapse to the most recent request; older predictions are stale.
+                while let Ok(p) = load_rx.try_recv() {
+                    path = p;
+                }
+                if let Ok(dec) = load_track(&path, device_sr) {
+                    let _ = loaded_tx.send((path, dec));
+                }
+            }
+        });
+
         // --- decode thread --------------------------------------------------
         let (cmd_tx, cmd_rx) = bounded::<TransportCmd>(64);
         {
@@ -140,13 +161,14 @@ impl AudioEngine {
             let dur_frames = dur_frames.clone();
             thread::spawn(move || {
                 decode_loop(
-                    cmd_rx, producer, device_sr, playing, volume, pos_frames, dur_frames,
+                    cmd_rx, loaded_rx, producer, device_sr, playing, volume, pos_frames, dur_frames,
                 );
             });
         }
 
         Ok(Self {
             cmd_tx,
+            load_tx,
             scope_out,
             device_sr,
             pos_frames,
@@ -159,6 +181,12 @@ impl AudioEngine {
 
     pub fn send(&self, cmd: TransportCmd) {
         let _ = self.cmd_tx.send(cmd);
+    }
+
+    /// Ask the loader thread to decode `path` ahead of time. A later
+    /// `Open(path)` for the same file then switches instantly (gapless).
+    pub fn preload(&self, path: PathBuf) {
+        let _ = self.load_tx.send(path);
     }
 
     /// Latest interleaved-stereo scope window (`SCOPE_LEN * 2`, most recent last).
@@ -190,6 +218,7 @@ impl AudioEngine {
 /// Decode-thread main loop: owns the current track in memory and feeds the ring.
 fn decode_loop(
     cmd_rx: Receiver<TransportCmd>,
+    loaded_rx: Receiver<(PathBuf, DecodedAudio)>,
     mut producer: rtrb::Producer<f32>,
     device_sr: u32,
     playing: Arc<AtomicBool>,
@@ -199,8 +228,15 @@ fn decode_loop(
 ) {
     let mut audio: Option<DecodedAudio> = None;
     let mut cursor: usize = 0; // frame index into the current track
+    // Track decoded ahead of time by the loader thread, ready for an instant,
+    // gapless switch when its path is Open-ed.
+    let mut preloaded: Option<(PathBuf, DecodedAudio)> = None;
 
     loop {
+        // Pick up any finished preload (keep only the most recent).
+        while let Ok(item) = loaded_rx.try_recv() {
+            preloaded = Some(item);
+        }
         // Drain all pending commands first.
         let mut got_cmd = false;
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -211,12 +247,23 @@ fn decode_loop(
                     // stopped state (dur = 0) rather than stale values, which
                     // would otherwise make the UI's end-of-track detector fire
                     // every tick and storm-advance through the list.
+                    //
+                    // The output ring is intentionally not cleared: any tail of
+                    // the previous track plays out and the new track's samples
+                    // follow contiguously, which is what makes the boundary
+                    // seamless when the next track was preloaded.
                     audio = None;
                     cursor = 0;
                     pos_frames.store(0, Ordering::Relaxed);
                     dur_frames.store(0, Ordering::Relaxed);
                     playing.store(false, Ordering::Relaxed);
-                    if let Ok(dec) = load_track(&path, device_sr) {
+                    // Use the preloaded buffer if it matches (no decode latency);
+                    // otherwise decode synchronously now.
+                    let dec = match preloaded.take() {
+                        Some((p, d)) if p == path => Ok(d),
+                        _ => load_track(&path, device_sr),
+                    };
+                    if let Ok(dec) = dec {
                         dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
                         audio = Some(dec);
                         playing.store(true, Ordering::Relaxed);
