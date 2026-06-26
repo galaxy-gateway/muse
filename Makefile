@@ -12,16 +12,22 @@ BIN := muse
         clean install uninstall tag
 
 help: ## Show this help
-	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| sort \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	@awk 'BEGIN {FS = ":.*?## "} \
+		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
+		/^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' \
+		$(MAKEFILE_LIST)
 
+##@ Build
 build: ## Debug build
 	cargo build
 
 release: ## Optimized release build
 	cargo build --release
 
+clean: ## Remove build artifacts
+	cargo clean
+
+##@ Run
 run: build ## Run on DIR (default ".") — e.g. make run DIR=~/Music
 	cargo run -- $(DIR)
 
@@ -29,6 +35,7 @@ probe: build ## Headless decode+tag check of FILE — make probe FILE=track.mp3
 	@test -n "$(FILE)" || { echo "usage: make probe FILE=<path>"; exit 1; }
 	./target/debug/$(BIN) --probe "$(FILE)"
 
+##@ Quality
 test: ## Run tests
 	cargo test
 
@@ -47,15 +54,14 @@ lint: ## Clippy with warnings as errors
 audit: ## Scan dependencies for security advisories (needs cargo-audit)
 	cargo audit
 
-clean: ## Remove build artifacts
-	cargo clean
-
+##@ Install
 install: release ## Install the binary to ~/.cargo/bin
 	cargo install --path .
 
 uninstall: ## Remove the installed binary
 	cargo uninstall $(BIN)
 
+##@ Release
 tag: ## GPG-sign a git tag from the Cargo.toml version (vX.Y.Z)
 	@v=$$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2); \
 		echo "tagging v$$v"; \
