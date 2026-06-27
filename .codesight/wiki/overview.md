@@ -16,4 +16,4 @@ Changes to these files have the widest blast radius across the codebase:
 - `src/effects/basic.rs` — imported by **1** files
 
 ---
-_Back to [index.md](./index.md) · Generated 2026-06-26_
+_Back to [index.md](./index.md) · Generated 2026-06-27_
