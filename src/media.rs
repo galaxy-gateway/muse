@@ -98,7 +98,7 @@ impl Default for Registry {
 
 fn read_audio_meta(path: &Path) -> Meta {
     use lofty::file::{AudioFile, TaggedFileExt};
-    use lofty::tag::Accessor;
+    use lofty::tag::{Accessor, ItemKey};
 
     let mut meta = Meta::default();
     let tagged = match lofty::read_from_path(path) {
@@ -107,21 +107,80 @@ fn read_audio_meta(path: &Path) -> Meta {
     };
     let props = tagged.properties();
     meta.duration = props.duration().as_secs_f64();
-    if let Some(sr) = props.sample_rate() {
-        meta.fields.push(("sample rate".into(), format!("{sr} Hz")));
-    }
-    if let Some(br) = props.audio_bitrate() {
-        meta.fields.push(("bitrate".into(), format!("{br} kbps")));
-    }
-    if let Some(ch) = props.channels() {
-        meta.fields.push(("channels".into(), ch.to_string()));
-    }
-    let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
-    if let Some(tag) = tag {
+
+    // Musical tags first (present-only), then technical details.
+    if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
         meta.title = tag.title().map(|c| c.to_string()).unwrap_or_default();
         meta.artist = tag.artist().map(|c| c.to_string()).unwrap_or_default();
         meta.album = tag.album().map(|c| c.to_string()).unwrap_or_default();
         meta.genre = tag.genre().map(|c| c.to_string()).unwrap_or_default();
+
+        // "n" or "n/total" for track and disc.
+        let counted = |n: Option<u32>, total: Option<u32>| -> String {
+            match (n, total) {
+                (Some(n), Some(t)) => format!("{n}/{t}"),
+                (Some(n), None) => n.to_string(),
+                _ => String::new(),
+            }
+        };
+        add_field(
+            &mut meta.fields,
+            "track",
+            counted(tag.track(), tag.track_total()),
+        );
+        add_field(
+            &mut meta.fields,
+            "disc",
+            counted(tag.disk(), tag.disk_total()),
+        );
+        let s = |k: ItemKey| tag.get_string(k).unwrap_or("").to_string();
+        add_field(&mut meta.fields, "year", s(ItemKey::Year));
+        add_field(&mut meta.fields, "album artist", s(ItemKey::AlbumArtist));
+        add_field(&mut meta.fields, "bpm", s(ItemKey::IntegerBpm));
+        add_field(&mut meta.fields, "key", s(ItemKey::InitialKey));
+        add_field(&mut meta.fields, "gain", s(ItemKey::ReplayGainTrackGain));
+    }
+
+    add_field(&mut meta.fields, "format", codec_name(tagged.file_type()));
+    if let Some(sr) = props.sample_rate() {
+        add_field(&mut meta.fields, "sample rate", format!("{sr} Hz"));
+    }
+    if let Some(bd) = props.bit_depth() {
+        add_field(&mut meta.fields, "bit depth", format!("{bd}-bit"));
+    }
+    if let Some(br) = props.audio_bitrate() {
+        add_field(&mut meta.fields, "bitrate", format!("{br} kbps"));
+    }
+    if let Some(ch) = props.channels() {
+        add_field(&mut meta.fields, "channels", ch.to_string());
     }
     meta
+}
+
+/// Push `(key, value)` only when `value` is non-empty, so absent tags don't
+/// render as blank rows.
+fn add_field(fields: &mut Vec<(String, String)>, key: &str, value: String) {
+    if !value.is_empty() {
+        fields.push((key.to_string(), value));
+    }
+}
+
+/// Friendly codec label for a lofty `FileType` (e.g. `Mpeg` -> `MP3`).
+fn codec_name(ft: lofty::file::FileType) -> String {
+    use lofty::file::FileType;
+    match ft {
+        FileType::Mpeg => "MP3",
+        FileType::Flac => "FLAC",
+        FileType::Mp4 => "MP4/AAC",
+        FileType::Opus => "Opus",
+        FileType::Vorbis => "Vorbis",
+        FileType::Wav => "WAV",
+        FileType::Aiff => "AIFF",
+        FileType::Aac => "AAC",
+        FileType::Ape => "APE",
+        FileType::WavPack => "WavPack",
+        FileType::Speex => "Speex",
+        other => return format!("{other:?}"),
+    }
+    .to_string()
 }
