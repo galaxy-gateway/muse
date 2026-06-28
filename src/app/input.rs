@@ -31,6 +31,10 @@ impl App {
             self.theme_key(key);
             return;
         }
+        if self.show_queue {
+            self.queue_key(key);
+            return;
+        }
         // Esc in normal mode clears an applied filter, restoring the tree view.
         if key.code == KeyCode::Esc && self.filter_active() {
             self.clear_filter();
@@ -62,9 +66,13 @@ impl App {
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => self.expand(),
             (KeyCode::Enter, _) => self.enter(),
             (KeyCode::Char(' '), _) => self.engine.send(TransportCmd::Toggle),
-            (KeyCode::Char('n'), _) => self.play_relative(1),
-            (KeyCode::Char('p'), _) => self.play_relative(-1),
+            (KeyCode::Char('n'), _) => self.play_next(),
+            (KeyCode::Char('p'), _) => self.play_prev(),
             (KeyCode::Char('u'), _) => self.play_previous_track(),
+            (KeyCode::Char('a'), _) => self.queue_append(),
+            (KeyCode::Char('A'), _) => self.queue_play_next(),
+            (KeyCode::Char('Q'), _) => self.toggle_queue(),
+            (KeyCode::Char('w'), _) => self.write_queue_m3u(),
             (KeyCode::Char('c'), _) => self.jump_to_now_playing(),
             (KeyCode::Char('r'), _) => {
                 self.loop_mode = self.loop_mode.next();
@@ -234,6 +242,24 @@ impl App {
         self.theme_idx = self.theme_prev;
         self.theme = THEMES[self.theme_idx];
         self.show_theme = false;
+    }
+
+    /// Queue-manager modal keys: navigate, reorder, remove, play, save, close.
+    fn queue_key(&mut self, key: KeyEvent) {
+        match (key.code, key.modifiers) {
+            (KeyCode::Esc, _) | (KeyCode::Char('q'), _) | (KeyCode::Char('Q'), _) => {
+                self.show_queue = false;
+            }
+            (KeyCode::Char('j'), _) | (KeyCode::Down, _) => self.queue_move_cursor(1),
+            (KeyCode::Char('k'), _) | (KeyCode::Up, _) => self.queue_move_cursor(-1),
+            (KeyCode::Char('J'), _) => self.queue_reorder(1),
+            (KeyCode::Char('K'), _) => self.queue_reorder(-1),
+            (KeyCode::Char('x'), _) => self.queue_remove_sel(),
+            (KeyCode::Char('X'), _) => self.queue_clear(),
+            (KeyCode::Enter, _) => self.queue_play_sel(),
+            (KeyCode::Char('w'), _) => self.write_queue_m3u(),
+            _ => {}
+        }
     }
 
     fn theme_key(&mut self, key: KeyEvent) {

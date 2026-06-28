@@ -13,7 +13,7 @@ Changes to these files have the widest blast radius across the codebase:
 - `src/app/mouse.rs` — imported by **1** files
 - `src/app/nav.rs` — imported by **1** files
 - `src/app/playback.rs` — imported by **1** files
-- `src/effects/basic.rs` — imported by **1** files
+- `src/app/queue.rs` — imported by **1** files
 
 ---
 _Back to [index.md](./index.md) · Generated 2026-06-28_

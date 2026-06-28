@@ -82,29 +82,21 @@ impl App {
         if !self.gapless {
             return;
         }
-        let list = self.current_media();
-        if list.is_empty() {
-            return;
-        }
-        let cur = self
-            .now_playing
-            .as_ref()
-            .and_then(|p| list.iter().position(|x| x == p));
-        let next = match self.loop_mode {
-            LoopMode::One => self.now_playing.clone(),
-            LoopMode::All => cur.map(|i| list[(i + 1) % list.len()].clone()),
-            LoopMode::Off => cur.and_then(|i| list.get(i + 1).cloned()),
+        let next = if self.loop_mode == LoopMode::One {
+            self.now_playing.clone()
+        } else {
+            self.predict_auto_next()
         };
-        if let Some(n) = next {
-            if self.registry.is_supported(&n) {
-                self.engine.preload(n);
-            }
+        if let Some(n) = next
+            && self.registry.is_supported(&n)
+        {
+            self.engine.preload(n);
         }
     }
 
     /// Ordered media paths in the current view (filtered results, else the
     /// visible tree's media files) — the list `n`/`p` and auto-advance walk.
-    fn current_media(&self) -> Vec<PathBuf> {
+    pub(super) fn current_media(&self) -> Vec<PathBuf> {
         if self.filter_active() {
             self.filtered.clone()
         } else {
@@ -168,26 +160,15 @@ impl App {
         if !ended {
             return;
         }
-        match self.loop_mode {
-            LoopMode::Off => {
-                // advance, but stop at the end of the list
-                let list = self.current_media();
-                let next = self
-                    .now_playing
-                    .as_ref()
-                    .and_then(|p| list.iter().position(|x| x == p))
-                    .map(|i| i + 1)
-                    .filter(|&i| i < list.len());
-                if let Some(i) = next {
-                    self.play_path(list[i].clone());
-                }
+        // LoopMode::One repeats in place; otherwise advance via the queue-aware
+        // predictor (which falls back to the tree list, wrapping for All and
+        // stopping at the end for Off).
+        if self.loop_mode == LoopMode::One {
+            if let Some(p) = self.now_playing.clone() {
+                self.play_path(p);
             }
-            LoopMode::All => self.play_relative(1),
-            LoopMode::One => {
-                if let Some(p) = self.now_playing.clone() {
-                    self.play_path(p);
-                }
-            }
+        } else if let Some(p) = self.predict_auto_next() {
+            self.play_path(p);
         }
     }
 }

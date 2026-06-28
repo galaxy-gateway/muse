@@ -73,8 +73,8 @@ impl TreeModel {
                         continue; // skip dotfiles
                     }
                 }
-                // keep dirs and supported media files only
-                if is_dir || reg.is_supported(&p) {
+                // keep dirs, supported media, and playlist (.m3u) files
+                if is_dir || reg.is_visible(&p) {
                     let size = if is_dir {
                         0
                     } else {

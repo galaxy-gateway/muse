@@ -52,6 +52,58 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
+/// Queue manager: the ordered play queue with the now-playing track marked.
+/// Navigated/edited with j/k, J/K, x, X, Enter, w.
+pub(super) fn draw_queue_modal(f: &mut Frame, app: &App) {
+    let t = &app.theme;
+    let area = centered(60, 80, f.area());
+    f.render_widget(Clear, area);
+    let items: Vec<ListItem> = if app.queue.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "queue empty — 'a' append, 'A' play-next from the tree",
+            Style::default().fg(t.dim),
+        )))]
+    } else {
+        app.queue
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let name = p
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let playing = app.now_playing.as_deref() == Some(p.as_path());
+                let color = if playing { t.playing } else { t.media };
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:>3} ", i + 1), Style::default().fg(t.dim)),
+                    Span::styled(
+                        if playing { "♪ " } else { "  " },
+                        Style::default().fg(color),
+                    ),
+                    Span::styled(name, Style::default().fg(color)),
+                ]))
+            })
+            .collect()
+    };
+    let list = List::new(items)
+        .block(
+            panel_hint(
+                "queue",
+                border(t, app.frame, t.accent2, 0.14),
+                "j/k move · J/K reorder · x del · X clear · ⏎ play · w save · esc",
+                t.dim,
+            )
+            .padding(Padding::horizontal(1)),
+        )
+        .highlight_style(Style::default().bg(t.bg_sel).add_modifier(Modifier::BOLD))
+        .highlight_symbol("▌");
+    let mut state = ListState::default();
+    if !app.queue.is_empty() {
+        state.select(Some(app.queue_sel.min(app.queue.len() - 1)));
+    }
+    f.render_stateful_widget(list, area, &mut state);
+}
+
 pub(super) fn draw_help(f: &mut Frame, app: &App) {
     let t = &app.theme;
     let area = centered(62, 75, f.area());
@@ -70,6 +122,8 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  space            play / pause"),
         Line::from("  n / p            next / previous track"),
         Line::from("  u                back to previous song (resumes position)"),
+        Line::from("  a / A            queue: append / play-next the selection"),
+        Line::from("  Q                open queue manager   w  save queue (.m3u)"),
         Line::from("  c                jump cursor to the now-playing track"),
         Line::from("  r                loop mode (off / all / one)"),
         Line::from("  b                gapless playback on / off (saved)"),

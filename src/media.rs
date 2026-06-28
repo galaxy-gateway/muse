@@ -74,6 +74,20 @@ impl Registry {
     pub fn is_supported(&self, path: &Path) -> bool {
         self.for_path(path).is_some()
     }
+
+    /// A playlist file (m3u/m3u8): shown in the tree and loadable, but not
+    /// itself decodable media.
+    pub fn is_playlist(&self, path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| matches!(e.to_ascii_lowercase().as_str(), "m3u" | "m3u8"))
+            .unwrap_or(false)
+    }
+
+    /// Whether the tree should show this path: playable media or a playlist.
+    pub fn is_visible(&self, path: &Path) -> bool {
+        self.is_supported(path) || self.is_playlist(path)
+    }
 }
 
 impl Default for Registry {

@@ -12,7 +12,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app::App;
 use inspector::draw_inspector;
-use modals::{draw_help, draw_theme_modal};
+use modals::{draw_help, draw_queue_modal, draw_theme_modal};
 use transport::draw_transport;
 use tree::{draw_selection, draw_tree};
 use widgets::draw_hover_seek;
@@ -61,6 +61,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_hover_seek(f, app);
     if app.show_theme {
         draw_theme_modal(f, app);
+    }
+    if app.show_queue {
+        draw_queue_modal(f, app);
     }
     if app.show_help {
         draw_help(f, app);

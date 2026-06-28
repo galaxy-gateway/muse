@@ -68,6 +68,9 @@ impl App {
         } else if node.is_media {
             let path = node.path.clone();
             self.play_path(path);
+        } else if self.registry.is_playlist(&node.path) {
+            let path = node.path.clone();
+            self.load_m3u(path);
         }
     }
 

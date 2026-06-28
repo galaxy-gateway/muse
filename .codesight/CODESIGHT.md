@@ -3,8 +3,8 @@
 > **Stack:** raw-http | none | unknown | rust
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
-> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,000 tokens. **Saves ~7,300 tokens per conversation.**
-> **Last scanned:** 2026-06-28 06:07 — re-run after significant changes
+> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,100 tokens. **Saves ~7,400 tokens per conversation.**
+> **Last scanned:** 2026-06-28 06:17 — re-run after significant changes
 
 ---
 
@@ -25,6 +25,7 @@
 - `src/app/mouse.rs` — imported by **1** files
 - `src/app/nav.rs` — imported by **1** files
 - `src/app/playback.rs` — imported by **1** files
+- `src/app/queue.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
@@ -39,7 +40,6 @@
 - `src/app.rs` — imported by **1** files
 - `src/audio.rs` — imported by **1** files
 - `src/color.rs` — imported by **1** files
-- `src/config.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -48,11 +48,11 @@
 - `src/app/mouse.rs` ← `src/app/mod.rs`
 - `src/app/nav.rs` ← `src/app/mod.rs`
 - `src/app/playback.rs` ← `src/app/mod.rs`
+- `src/app/queue.rs` ← `src/app/mod.rs`
 - `src/effects/basic.rs` ← `src/effects/mod.rs`
 - `src/effects/bubbles.rs` ← `src/effects/mod.rs`
 - `src/effects/electric.rs` ← `src/effects/mod.rs`
 - `src/effects/flag.rs` ← `src/effects/mod.rs`
-- `src/effects/flame.rs` ← `src/effects/mod.rs`
 
 ---
 

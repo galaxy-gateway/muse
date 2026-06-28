@@ -8,6 +8,7 @@ mod mediakeys;
 mod mouse;
 mod nav;
 mod playback;
+mod queue;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -96,6 +97,12 @@ pub struct App {
     /// The track playing before the current one, with its playhead at the moment
     /// we switched away — lets `u` jump back and resume (undo an accidental click).
     pub(super) prev_track: Option<(PathBuf, f64)>,
+    /// Explicit play queue (absolute paths). When the now-playing track is in it,
+    /// next/prev and the gapless prefetch walk the queue instead of the tree list.
+    pub queue: Vec<PathBuf>,
+    /// Queue-manager modal: open flag + its cursor row.
+    pub show_queue: bool,
+    pub(super) queue_sel: usize,
     pub loop_mode: LoopMode,
     /// Held-nav acceleration: the last j/k/↑/↓ direction + when it fired, and how
     /// many consecutive same-direction repeats have stacked. Drives `move_cursor_accel`.
@@ -193,6 +200,9 @@ impl App {
             wave_gen: 0,
             now_playing: None,
             prev_track: None,
+            queue: Vec::new(),
+            show_queue: false,
+            queue_sel: 0,
             loop_mode: LoopMode::Off,
             nav_last: None,
             nav_streak: 0,

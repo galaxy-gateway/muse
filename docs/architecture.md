@@ -182,6 +182,17 @@ predicted-next track for the prefetch follows the same `LoopMode` logic
 (`preload_next`), so the splice respects the active loop mode; a manual `n`/`p`
 or loop-mode change re-primes it.
 
+**Play queue.** `app/queue.rs` adds an explicit ordered queue (`App::queue`,
+absolute paths) built from the tree selection (`a` append, `A` play-next; dirs
+expand recursively). `predict_auto_next` is the single advance predictor shared
+by `preload_next` and `check_track_end`: when the now-playing track is in the
+queue it walks the queue (All wraps, Off stops), otherwise it falls back to the
+tree list honoring `LoopMode`. `n`/`p` (`play_next`/`play_prev`) are queue-first
+and start/​wrap the queue. The queue manager is a modal (`Q`), and queues
+round-trip through `.m3u` (`w` writes `muse-queue.m3u`; Enter on a playlist node
+loads it — `.m3u` files are now tree-visible but non-media via
+`Registry::is_visible`).
+
 **Fuzzy filter.** `/` enters filter mode; keystrokes rebuild `filtered` by
 scoring the background `index` with `util::fuzzy_score`. While a filter is
 active the list view is the flat results, and `cursor()` returns `None` (no tree
