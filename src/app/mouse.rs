@@ -47,6 +47,7 @@ impl App {
                 for rect in [self.wave_rect, self.transport_rect] {
                     if frac_in_rect(rect, col, row).is_some() {
                         self.seeking_rect = Some(rect);
+                        self.seek_start_secs = Some(self.engine.position_secs());
                         self.seek_to(frac_col(rect, col));
                         return;
                     }
@@ -63,7 +64,10 @@ impl App {
                     self.seek_to(frac_col(rect, col));
                 }
             }
-            MouseEventKind::Up(MouseButton::Left) => self.seeking_rect = None,
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.seeking_rect = None;
+                self.seek_start_secs = None;
+            }
             _ => {}
         }
     }
@@ -113,6 +117,21 @@ impl App {
     /// Whether the selection copy button should show its "copied" checkmark.
     pub fn sel_copy_flashing(&self) -> bool {
         flashing(self.copy_flash_sel, self.frame)
+    }
+
+    /// During an active scrub, the cursor cell plus the target time and the
+    /// signed delta from where the drag began — for the drag tooltip. `None`
+    /// when not scrubbing or the track has no duration.
+    pub fn scrub_preview(&self) -> Option<(u16, u16, f64, f64)> {
+        let rect = self.seeking_rect?;
+        let (c, r) = self.hover?;
+        let dur = self.engine.duration_secs();
+        if dur <= 0.0 {
+            return None;
+        }
+        let target = frac_col(rect, c) * dur;
+        let start = self.seek_start_secs.unwrap_or(target);
+        Some((c, r, target, target - start))
     }
 
     /// Visible-list index for a click at (col,row) inside the tree panel.

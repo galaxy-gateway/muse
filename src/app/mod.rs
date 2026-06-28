@@ -151,6 +151,8 @@ pub struct App {
     pub screen: Rect,
     /// While a left-drag started on a seek bar, the rect being scrubbed.
     pub(super) seeking_rect: Option<Rect>,
+    /// Playhead position when the current scrub began, for the drag tooltip's delta.
+    pub(super) seek_start_secs: Option<f64>,
     /// Horizontal pan offset for the tree (mouse horizontal scroll).
     pub tree_hscroll: u16,
     /// Last mouse position, for hover highlighting of interactable parts.
@@ -243,6 +245,7 @@ impl App {
             sel_rect: Rect::default(),
             screen: Rect::default(),
             seeking_rect: None,
+            seek_start_secs: None,
             tree_hscroll: 0,
             hover: None,
             sim: ParticleSim::new(),

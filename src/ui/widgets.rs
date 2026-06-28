@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::app::App;
 use crate::config::Theme;
+use crate::util::{fmt_time, fmt_time_precise};
 
 pub(super) fn panel<'a>(title: &'a str, accent: Color) -> Block<'a> {
     Block::default()
@@ -61,5 +62,41 @@ pub(super) fn draw_hover_seek(f: &mut Frame, app: &App) {
             cell.set_fg(mark);
         }
         break;
+    }
+    draw_scrub_tooltip(f, app);
+}
+
+/// While dragging a seek bar, float the target time and the signed delta from
+/// where the drag started just above the cursor.
+fn draw_scrub_tooltip(f: &mut Frame, app: &App) {
+    let Some((c, r, target, delta)) = app.scrub_preview() else {
+        return;
+    };
+    let t = &app.theme;
+    let sign = if delta >= 0.0 { "+" } else { "-" };
+    let label = format!(
+        " {}  {}{} ",
+        fmt_time_precise(target),
+        sign,
+        fmt_time(delta.abs())
+    );
+    let chars: Vec<char> = label.chars().collect();
+    let w = chars.len() as u16;
+    let area = f.area();
+    // Anchor above the bar cursor when there's room, else just below.
+    let y = if r > area.y { r - 1 } else { r + 1 };
+    // Keep the label fully on-screen horizontally.
+    let x = c.min(area.x + area.width.saturating_sub(w));
+    let buf = f.buffer_mut();
+    for (i, ch) in chars.into_iter().enumerate() {
+        let cx = x + i as u16;
+        if cx >= area.x + area.width {
+            break;
+        }
+        let cell = &mut buf[(cx, y)];
+        cell.set_char(ch);
+        cell.set_fg(t.bg_sel);
+        cell.set_bg(t.playing);
+        cell.set_style(cell.style().add_modifier(Modifier::BOLD));
     }
 }
