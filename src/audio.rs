@@ -34,6 +34,8 @@ pub enum TransportCmd {
     /// Seek to an absolute position in seconds.
     SeekTo(f64),
     VolRel(f32),
+    /// Set absolute volume (0.0..1.0) — used to restore the saved session volume.
+    SetVol(f32),
 }
 
 /// Fully decoded track: interleaved **stereo** f32 at `sample_rate`.
@@ -310,6 +312,9 @@ fn decode_loop(
                 TransportCmd::VolRel(d) => {
                     let v = (f32::from_bits(volume.load(Ordering::Relaxed)) + d).clamp(0.0, 1.0);
                     volume.store(v.to_bits(), Ordering::Relaxed);
+                }
+                TransportCmd::SetVol(v) => {
+                    volume.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
                 }
             }
         }

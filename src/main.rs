@@ -63,6 +63,10 @@ fn main() -> Result<()> {
 
     let res = run(&mut terminal, &mut app, rx);
 
+    // Persist the session (now-playing track, position, volume, loop, cursor)
+    // so the next launch resumes where this one left off.
+    app.save_state();
+
     let _ = write!(terminal.backend_mut(), "\x1b[?1003l");
     disable_raw_mode()?;
     execute!(

@@ -382,6 +382,18 @@ pub struct Settings {
     /// Gapless cross-track playback (prefetch + sample-accurate splice).
     /// `None` (absent in the file) defaults to on.
     pub gapless: Option<bool>,
+
+    // --- last session: restored on next launch (playback resumes paused) ---
+    /// Absolute path of the track that was playing at exit.
+    pub session_track: Option<String>,
+    /// Playhead position (seconds) of that track at exit.
+    pub session_pos: Option<f64>,
+    /// Output volume (0.0..1.0) at exit.
+    pub session_volume: Option<f32>,
+    /// Loop mode at exit ("off" / "all" / "one").
+    pub session_loop: Option<String>,
+    /// Absolute path of the tree-cursor selection at exit.
+    pub session_cursor: Option<String>,
 }
 
 fn settings_path() -> Option<PathBuf> {

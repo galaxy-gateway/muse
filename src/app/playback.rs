@@ -57,7 +57,7 @@ impl App {
 
     /// Shared now-playing bookkeeping once the engine is pointed at `path`,
     /// whether by an explicit `Open` or a decode-thread auto-advance.
-    fn begin_now_playing(&mut self, path: PathBuf) {
+    pub(super) fn begin_now_playing(&mut self, path: PathBuf) {
         self.spectrum.clear();
         self.now_playing = Some(path.clone());
         // The engine is (or is about to be) playing; arm end-of-track detection.

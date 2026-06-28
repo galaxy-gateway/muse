@@ -65,6 +65,7 @@ impl App {
             (KeyCode::Char('n'), _) => self.play_relative(1),
             (KeyCode::Char('p'), _) => self.play_relative(-1),
             (KeyCode::Char('u'), _) => self.play_previous_track(),
+            (KeyCode::Char('c'), _) => self.jump_to_now_playing(),
             (KeyCode::Char('r'), _) => {
                 self.loop_mode = self.loop_mode.next();
                 // The predicted-next track depends on the loop mode.

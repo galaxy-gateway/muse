@@ -18,7 +18,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use souvlaki::MediaControls;
 
-use crate::audio::AudioEngine;
+use crate::audio::{AudioEngine, TransportCmd};
 use crate::config::{
     SCOPE_PRESETS, ScopePreset, ScopeStyle, Settings, THEMES, Theme, load_settings, save_settings,
 };
@@ -56,6 +56,23 @@ impl LoopMode {
             LoopMode::Off => "loop off",
             LoopMode::All => "loop all",
             LoopMode::One => "loop one",
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            LoopMode::Off => "off",
+            LoopMode::All => "all",
+            LoopMode::One => "one",
+        }
+    }
+
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(LoopMode::Off),
+            "all" => Some(LoopMode::All),
+            "one" => Some(LoopMode::One),
+            _ => None,
         }
     }
 }
@@ -211,19 +228,96 @@ impl App {
             tx,
         };
         app.on_selection_changed();
+        app.restore_session(&settings);
         Ok(app)
+    }
+
+    /// Restore the last session: loop mode, volume, tree cursor, and the track
+    /// that was playing (reopened paused at its saved offset). Best-effort — a
+    /// missing/moved file or a cursor under a collapsed dir is simply skipped.
+    fn restore_session(&mut self, s: &Settings) {
+        if let Some(lm) = s.session_loop.as_deref().and_then(LoopMode::from_str) {
+            self.loop_mode = lm;
+        }
+        if let Some(v) = s.session_volume {
+            self.engine.send(TransportCmd::SetVol(v));
+        }
+        if let Some(cur) = &s.session_cursor {
+            let cur = PathBuf::from(cur);
+            if let Some(pos) = self
+                .tree
+                .visible
+                .iter()
+                .position(|&id| self.tree.node(id).path == cur)
+            {
+                self.list_state.select(Some(pos));
+                self.on_selection_changed();
+            }
+        }
+        if let Some(track) = &s.session_track {
+            let path = PathBuf::from(track);
+            if path.exists() && self.registry.is_supported(&path) {
+                self.engine.send(TransportCmd::Open(path.clone()));
+                self.begin_now_playing(path);
+                if let Some(pos) = s.session_pos {
+                    self.engine.send(TransportCmd::SeekTo(pos));
+                }
+                // Resume paused, so reopening muse never blasts audio unexpectedly.
+                self.engine.send(TransportCmd::Pause);
+                self.prev_playing = false;
+            }
+        }
+    }
+
+    /// Move the tree cursor onto the now-playing track if it is in the current
+    /// view (filtered results or the visible tree). Best-effort.
+    pub(super) fn jump_to_now_playing(&mut self) {
+        let Some(p) = self.now_playing.clone() else {
+            return;
+        };
+        let pos = if self.filter_active() {
+            self.filtered.iter().position(|x| x == &p)
+        } else {
+            self.tree
+                .visible
+                .iter()
+                .position(|&id| self.tree.node(id).path == p)
+        };
+        if let Some(pos) = pos {
+            self.list_state.select(Some(pos));
+            self.on_selection_changed();
+        }
     }
 
     pub fn scope_preset(&self) -> ScopePreset {
         SCOPE_PRESETS[self.scope_idx % SCOPE_PRESETS.len()]
     }
 
-    pub(super) fn persist(&self) {
-        save_settings(&Settings {
+    /// Build the full settings snapshot (preferences + last-session state).
+    fn current_settings(&self) -> Settings {
+        let p2s = |p: &PathBuf| p.to_string_lossy().into_owned();
+        Settings {
             scope_preset: Some(self.scope_preset().name.to_string()),
             theme: Some(self.theme.name.to_string()),
             gapless: Some(self.gapless),
-        });
+            session_track: self.now_playing.as_ref().map(p2s),
+            session_pos: self
+                .now_playing
+                .as_ref()
+                .map(|_| self.engine.position_secs()),
+            session_volume: Some(self.engine.volume()),
+            session_loop: Some(self.loop_mode.as_str().to_string()),
+            session_cursor: self.cursor_path().as_ref().map(p2s),
+        }
+    }
+
+    pub(super) fn persist(&self) {
+        save_settings(&self.current_settings());
+    }
+
+    /// Persist the full state on exit (call from `main` after the event loop).
+    pub fn save_state(&self) {
+        self.persist();
     }
 
     /// Whether the fuzzy filter is driving the list (vs. the file tree).
