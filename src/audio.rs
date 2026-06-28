@@ -496,10 +496,56 @@ fn decode_ffmpeg(path: &Path) -> Result<DecodedAudio> {
 }
 
 /// Cheap linear-interpolation resampler for interleaved stereo.
+/// Resample interleaved-stereo f32 from `from` Hz to `to` Hz. Uses a windowed-
+/// sinc (rubato) for clean band-limited conversion; falls back to linear
+/// interpolation if the resampler can't be constructed. Runs offline on the
+/// load thread, so the extra cost never touches the real-time path.
 fn resample_stereo(input: &[f32], from: u32, to: u32) -> Vec<f32> {
     if from == to || input.is_empty() {
         return input.to_vec();
     }
+    resample_sinc(input, from, to).unwrap_or_else(|| resample_linear(input, from, to))
+}
+
+/// Windowed-sinc resample of interleaved stereo via rubato. `None` if the
+/// resampler fails to construct or process (caller falls back to linear).
+fn resample_sinc(input: &[f32], from: u32, to: u32) -> Option<Vec<f32>> {
+    use rubato::audioadapter_buffers::direct::InterleavedSlice;
+    use rubato::{
+        Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+        WindowFunction, calculate_cutoff,
+    };
+
+    const CHANNELS: usize = 2;
+    const SINC_LEN: usize = 256;
+    let in_frames = input.len() / CHANNELS;
+    let ratio = to as f64 / from as f64;
+
+    let params = SincInterpolationParameters {
+        sinc_len: SINC_LEN,
+        f_cutoff: calculate_cutoff(SINC_LEN, WindowFunction::Blackman2),
+        interpolation: SincInterpolationType::Cubic,
+        oversampling_factor: 256,
+        window: WindowFunction::Blackman2,
+    };
+    let mut resampler =
+        Async::<f32>::new_sinc(ratio, 1.1, &params, 1024, CHANNELS, FixedAsync::Input).ok()?;
+
+    // Generous output capacity: resampled length plus a chunk of headroom for
+    // the resampler's delay/flush. Trimmed to the actual count afterwards.
+    let out_cap = (in_frames as f64 * ratio).ceil() as usize + 1024;
+    let mut out = vec![0f32; out_cap * CHANNELS];
+    let in_adapter = InterleavedSlice::new(input, CHANNELS, in_frames).ok()?;
+    let mut out_adapter = InterleavedSlice::new_mut(&mut out, CHANNELS, out_cap).ok()?;
+    let (_, out_frames) = resampler
+        .process_all_into_buffer(&in_adapter, &mut out_adapter, in_frames, None)
+        .ok()?;
+    out.truncate(out_frames * CHANNELS);
+    Some(out)
+}
+
+/// Linear-interpolation resample (fallback). Cheap, slightly soft/aliased.
+fn resample_linear(input: &[f32], from: u32, to: u32) -> Vec<f32> {
     let frames = input.len() / 2;
     let ratio = to as f64 / from as f64;
     let out_frames = (frames as f64 * ratio) as usize;
@@ -540,4 +586,38 @@ pub fn waveform_bins(path: &Path, n_bins: usize) -> Result<Vec<(f32, f32)>> {
         bins.push((lo, hi));
     }
     Ok(bins)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sinc_resample_length_and_finite() {
+        // 0.5s of 440Hz stereo at 44.1k -> 48k.
+        let from = 44_100u32;
+        let to = 48_000u32;
+        let frames = from as usize / 2;
+        let mut input = Vec::with_capacity(frames * 2);
+        for n in 0..frames {
+            let s = (n as f32 * 440.0 * std::f32::consts::TAU / from as f32).sin() * 0.5;
+            input.push(s);
+            input.push(s);
+        }
+        let out = resample_stereo(&input, from, to);
+        let out_frames = out.len() / 2;
+        let expected = (frames as f64 * to as f64 / from as f64) as usize;
+        // Within a small tolerance of the ideal ratio.
+        let diff = out_frames.abs_diff(expected);
+        assert!(diff < 256, "out_frames={out_frames} expected≈{expected}");
+        assert!(out.iter().all(|s| s.is_finite()), "non-finite sample");
+        // No silly clipping blowups from the sinc kernel.
+        assert!(out.iter().all(|s| s.abs() <= 1.5), "sample out of range");
+    }
+
+    #[test]
+    fn resample_noop_when_rates_match() {
+        let input = vec![0.1f32, -0.1, 0.2, -0.2];
+        assert_eq!(resample_stereo(&input, 48_000, 48_000), input);
+    }
 }
