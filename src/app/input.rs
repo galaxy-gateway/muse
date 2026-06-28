@@ -85,6 +85,17 @@ impl App {
                 self.preload_next();
                 self.persist();
             }
+            (KeyCode::Char('s'), _) => {
+                // Toggle shuffle; (re)build the no-repeat bag and re-prime prefetch.
+                self.shuffle = !self.shuffle;
+                if self.shuffle {
+                    self.refill_bag();
+                } else {
+                    self.shuffle_bag.clear();
+                }
+                self.preload_next();
+                self.persist();
+            }
             (KeyCode::Char('y'), _) => self.copy_selection_path(),
             (KeyCode::Char('Y'), _) => self.copy_now_playing_path(),
             (KeyCode::Char('.'), _) => self.seek_rel(5.0),

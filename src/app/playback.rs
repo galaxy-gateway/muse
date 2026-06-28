@@ -18,8 +18,19 @@ fn copy_path_to_clipboard(path: &Path) -> bool {
 }
 
 impl App {
-    /// Start playback of `path` (if it's a supported media file).
+    /// Start playback of `path` (if it's a supported media file). Records the
+    /// outgoing track into the shuffle/back history.
     pub(super) fn play_path(&mut self, path: PathBuf) {
+        self.play_path_inner(path, true);
+    }
+
+    /// Like `play_path` but without pushing the outgoing track onto the back
+    /// history — used by shuffle `previous` so repeated `p` walks backward.
+    pub(super) fn play_path_no_history(&mut self, path: PathBuf) {
+        self.play_path_inner(path, false);
+    }
+
+    fn play_path_inner(&mut self, path: PathBuf, record_history: bool) {
         if !self.registry.is_supported(&path) {
             return;
         }
@@ -31,7 +42,10 @@ impl App {
             _ => None,
         };
         if let Some(cur) = outgoing {
-            self.prev_track = Some((cur, self.engine.position_secs()));
+            self.prev_track = Some((cur.clone(), self.engine.position_secs()));
+            if record_history {
+                self.push_history(cur);
+            }
         }
         self.engine.send(TransportCmd::Open(path.clone()));
         self.begin_now_playing(path);
@@ -68,6 +82,8 @@ impl App {
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
             self.request_waveform(path);
         }
+        // Maintain the shuffle bag (drop the now-playing track, refill if dry).
+        self.shuffle_after_play();
         // Decode the track auto-advance will play next, so its boundary is gapless.
         self.preload_next();
     }
@@ -167,6 +183,8 @@ impl App {
             if let Some(p) = self.now_playing.clone() {
                 self.play_path(p);
             }
+        } else if self.shuffle {
+            self.advance_shuffle();
         } else if let Some(p) = self.predict_auto_next() {
             self.play_path(p);
         }

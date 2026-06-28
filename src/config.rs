@@ -382,6 +382,8 @@ pub struct Settings {
     /// Gapless cross-track playback (prefetch + sample-accurate splice).
     /// `None` (absent in the file) defaults to on.
     pub gapless: Option<bool>,
+    /// Shuffle mode (no-repeat bag). `None` defaults to off.
+    pub shuffle: Option<bool>,
 
     // --- last session: restored on next launch (playback resumes paused) ---
     /// Absolute path of the track that was playing at exit.

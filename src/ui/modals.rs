@@ -126,6 +126,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
         Line::from("  Q                open queue manager   w  save queue (.m3u)"),
         Line::from("  c                jump cursor to the now-playing track"),
         Line::from("  r                loop mode (off / all / one)"),
+        Line::from("  s                shuffle on / off (no-repeat, saved)"),
         Line::from("  b                gapless playback on / off (saved)"),
         Line::from("  y / Y or ⧉       copy selection / now-playing path"),
         Line::from("  , / .            seek -5s / +5s"),

@@ -9,6 +9,7 @@ mod mouse;
 mod nav;
 mod playback;
 mod queue;
+mod shuffle;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -104,6 +105,14 @@ pub struct App {
     pub show_queue: bool,
     pub(super) queue_sel: usize,
     pub loop_mode: LoopMode,
+    /// Shuffle mode: pick the next track from a no-repeat bag. Persisted.
+    pub shuffle: bool,
+    /// Upcoming shuffled tracks (excludes the now-playing one); refilled from the
+    /// active pool when drained. `play_history` backs shuffle's `previous`.
+    pub(super) shuffle_bag: Vec<PathBuf>,
+    pub(super) play_history: Vec<PathBuf>,
+    /// xorshift64 state for shuffle (seeded at startup; no `rand` dependency).
+    pub(super) rng: u64,
     /// Held-nav acceleration: the last j/k/↑/↓ direction + when it fired, and how
     /// many consecutive same-direction repeats have stacked. Drives `move_cursor_accel`.
     pub(super) nav_last: Option<(i32, Instant)>,
@@ -204,6 +213,15 @@ impl App {
             show_queue: false,
             queue_sel: 0,
             loop_mode: LoopMode::Off,
+            shuffle: settings.shuffle.unwrap_or(false),
+            shuffle_bag: Vec::new(),
+            play_history: Vec::new(),
+            // Seed the PRNG from wall-clock nanos (any nonzero value works).
+            rng: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E3779B97F4A7C15)
+                | 1,
             nav_last: None,
             nav_streak: 0,
             gapless: settings.gapless.unwrap_or(true),
@@ -310,6 +328,7 @@ impl App {
             scope_preset: Some(self.scope_preset().name.to_string()),
             theme: Some(self.theme.name.to_string()),
             gapless: Some(self.gapless),
+            shuffle: Some(self.shuffle),
             session_track: self.now_playing.as_ref().map(p2s),
             session_pos: self
                 .now_playing

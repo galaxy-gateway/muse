@@ -193,6 +193,14 @@ round-trip through `.m3u` (`w` writes `muse-queue.m3u`; Enter on a playlist node
 loads it — `.m3u` files are now tree-visible but non-media via
 `Registry::is_visible`).
 
+**Shuffle.** `app/shuffle.rs` adds a no-repeat shuffle (`s`, persisted). A
+`shuffle_bag` holds the upcoming tracks — a Fisher-Yates permutation (seeded
+xorshift64, no `rand` dep) of the active pool (queue or tree list) minus the
+now-playing track. `predict_auto_next` returns the bag head when shuffling, so
+the gapless prefetch matches the advance; `advance_shuffle` plays it and the bag
+refills each cycle (All) or stops (Off). `play_history` backs shuffle's `p`
+(previous), walking back through what actually played.
+
 **Fuzzy filter.** `/` enters filter mode; keystrokes rebuild `filtered` by
 scoring the background `index` with `util::fuzzy_score`. While a filter is
 active the list view is the flat results, and `cursor()` returns `None` (no tree

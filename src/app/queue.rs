@@ -65,6 +65,11 @@ impl App {
     /// the tree list honoring the loop mode (All wraps, Off stops). `LoopMode::One`
     /// is handled by the callers.
     pub(super) fn predict_auto_next(&self) -> Option<PathBuf> {
+        // Shuffle: the next track is the head of the upcoming bag. Empty means
+        // the cycle just finished (the bag refills at advance time).
+        if self.shuffle {
+            return self.shuffle_bag.first().cloned();
+        }
         if let Some(np) = self.now_playing.as_ref()
             && let Some(i) = self.queue.iter().position(|x| x == np)
         {
@@ -94,6 +99,15 @@ impl App {
     /// `n`: next track. Queue-first (starting the queue if nothing in it is
     /// playing yet, wrapping at the end); otherwise the tree list.
     pub(super) fn play_next(&mut self) {
+        if self.shuffle {
+            // Manual next always advances: refill the bag first if a cycle ended,
+            // so even LoopMode::Off (which auto-stops) still skips on demand.
+            if self.shuffle_bag.is_empty() {
+                self.refill_bag();
+            }
+            self.advance_shuffle();
+            return;
+        }
         if !self.queue.is_empty() {
             let pos = self
                 .now_playing
@@ -118,6 +132,10 @@ impl App {
     /// `p`: previous track. Walks the queue when playing from it (wrapping),
     /// else the tree list.
     pub(super) fn play_prev(&mut self) {
+        if self.shuffle {
+            self.shuffle_prev();
+            return;
+        }
         if !self.queue.is_empty()
             && let Some(i) = self
                 .now_playing

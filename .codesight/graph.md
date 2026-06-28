@@ -8,6 +8,7 @@
 - `src/app/nav.rs` — imported by **1** files
 - `src/app/playback.rs` — imported by **1** files
 - `src/app/queue.rs` — imported by **1** files
+- `src/app/shuffle.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
@@ -21,7 +22,6 @@
 - `src/effects/starfield.rs` — imported by **1** files
 - `src/app.rs` — imported by **1** files
 - `src/audio.rs` — imported by **1** files
-- `src/color.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -31,7 +31,7 @@
 - `src/app/nav.rs` ← `src/app/mod.rs`
 - `src/app/playback.rs` ← `src/app/mod.rs`
 - `src/app/queue.rs` ← `src/app/mod.rs`
+- `src/app/shuffle.rs` ← `src/app/mod.rs`
 - `src/effects/basic.rs` ← `src/effects/mod.rs`
 - `src/effects/bubbles.rs` ← `src/effects/mod.rs`
 - `src/effects/electric.rs` ← `src/effects/mod.rs`
-- `src/effects/flag.rs` ← `src/effects/mod.rs`
