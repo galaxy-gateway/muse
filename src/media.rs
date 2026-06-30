@@ -202,13 +202,100 @@ fn codec_name(ft: lofty::file::FileType) -> String {
     .to_string()
 }
 
-/// Raw bytes of the first embedded cover-art picture in `path`'s tags, if any.
-/// The bytes are still encoded (JPEG/PNG/...); the caller decodes them.
+/// Encoded cover-art bytes (JPEG/PNG/...) for `path`: the first embedded
+/// picture if present, otherwise a `cover.jpg`/`folder.png`/... image sitting
+/// in the track's directory. The caller decodes them.
 pub fn cover_art_bytes(path: &Path) -> Option<Vec<u8>> {
+    embedded_cover(path).or_else(|| folder_cover(path))
+}
+
+fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
     use lofty::file::TaggedFileExt;
 
     let tagged = lofty::read_from_path(path).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
     let pic = tag.pictures().first()?;
     Some(pic.data().to_vec())
+}
+
+/// Common sidecar cover-image stems and extensions, checked in the track's dir.
+const COVER_STEMS: &[&str] = &["cover", "folder", "front", "album", "albumart", "art"];
+const COVER_EXTS: &[&str] = &["jpg", "jpeg", "png"];
+
+fn folder_cover(path: &Path) -> Option<Vec<u8>> {
+    let dir = path.parent()?;
+    // Fast path: exact lowercase names in priority order.
+    for stem in COVER_STEMS {
+        for ext in COVER_EXTS {
+            let p = dir.join(format!("{stem}.{ext}"));
+            if p.is_file() {
+                return std::fs::read(p).ok();
+            }
+        }
+    }
+    // Fallback: case-insensitive scan (e.g. "Cover.JPG", "Folder.Jpeg"),
+    // keeping the highest-priority stem.
+    let mut best: Option<(usize, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let p = entry.path();
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let stem = stem.to_ascii_lowercase();
+        let ext = p
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if COVER_EXTS.contains(&ext.as_str())
+            && let Some(rank) = COVER_STEMS.iter().position(|s| *s == stem)
+            && best.as_ref().is_none_or(|(r, _)| rank < *r)
+        {
+            best = Some((rank, p));
+        }
+    }
+    best.and_then(|(_, p)| std::fs::read(p).ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_cover_found_by_name_priority() {
+        let dir = std::env::temp_dir().join("muse_cover_test_a");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Lower-priority "art.png" plus higher-priority "cover.jpg".
+        std::fs::write(dir.join("art.png"), b"PNGART").unwrap();
+        std::fs::write(dir.join("cover.jpg"), b"JPEGCOVER").unwrap();
+        let track = dir.join("song.flac");
+        std::fs::write(&track, b"not a real flac").unwrap();
+        // No embedded art in the junk file -> folder fallback, cover.jpg wins.
+        assert_eq!(cover_art_bytes(&track).as_deref(), Some(&b"JPEGCOVER"[..]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folder_cover_case_insensitive() {
+        let dir = std::env::temp_dir().join("muse_cover_test_b");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Folder.PNG"), b"CAPS").unwrap();
+        let track = dir.join("song.mp3");
+        std::fs::write(&track, b"junk").unwrap();
+        assert_eq!(cover_art_bytes(&track).as_deref(), Some(&b"CAPS"[..]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_cover_returns_none() {
+        let dir = std::env::temp_dir().join("muse_cover_test_c");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let track = dir.join("song.mp3");
+        std::fs::write(&track, b"junk").unwrap();
+        assert!(cover_art_bytes(&track).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
