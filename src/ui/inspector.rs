@@ -28,39 +28,38 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     draw_now_playing(f, app, rows[0]);
-    // The middle panel shows album art when toggled on and the now-playing
-    // track has embedded cover art; otherwise the static waveform.
+    // When album art is toggled on and available, render it as a dimmed backdrop
+    // with the waveform drawn over it; otherwise the plain braille waveform.
     let art = app
         .show_art
         .then(|| app.now_playing.as_ref().and_then(|p| app.wave_art.get(p)))
         .flatten()
         .and_then(|o| o.as_ref());
     if let Some(img) = art {
-        draw_album_art(f, app, rows[1], img);
+        let t = &app.theme;
+        let block = panel("waveform", border(t, app.frame, t.wave, 0.42));
+        let inner = block.inner(rows[1]);
+        f.render_widget(block, rows[1]);
+        fill_album_art(f, app, inner, img);
+        draw_wave_overlay(f, app, inner);
     } else {
         draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
     }
     draw_scope(f, app, rows[2]);
 }
 
-/// Render an album cover into `area` using upper-half-block (`▀`) cells: each
-/// cell packs two vertical pixels (fg = top, bg = bottom), so the resolution is
-/// `inner_w x 2*inner_h`. The cover is aspect-fit and centered on a themed mat.
-fn draw_album_art(f: &mut Frame, app: &App, area: Rect, img: &image::RgbImage) {
+/// Fill `inner` with the cover as a **dimmed** backdrop using upper-half-block
+/// (`▀`) cells (two pixels per cell: fg = top, bg = bottom), aspect-fit and
+/// centered on a themed mat. Dimmed so the overlaid waveform stays legible.
+fn fill_album_art(f: &mut Frame, app: &App, inner: Rect, img: &image::RgbImage) {
     use ratatui::style::Color;
 
-    let t = &app.theme;
-    let block = panel("album art", border(t, app.frame, t.wave, 0.42));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
     let cols = inner.width as u32;
     let rows = inner.height as u32 * 2; // two pixels per cell vertically
 
-    // Aspect-fit the cover within cols x rows (cells are ~2x taller than wide,
-    // already accounted for by the 2x vertical pixel density).
     let (iw, ih) = (img.width().max(1), img.height().max(1));
     let scale = (cols as f32 / iw as f32).min(rows as f32 / ih as f32);
     let fw = ((iw as f32 * scale).round() as u32).clamp(1, cols);
@@ -69,13 +68,19 @@ fn draw_album_art(f: &mut Frame, app: &App, area: Rect, img: &image::RgbImage) {
     let ox = (cols - fw) / 2;
     let oy = (rows - fh) / 2;
 
-    let (mr, mg, mb) = crate::color::rgb_of(t.bg_sel);
-    let mat = Color::Rgb(mr as u8, mg as u8, mb as u8);
-    // Sample the fitted image (or the mat outside it) for pixel (px, py).
+    // Backdrop dim factor: keeps the cover readable but lets the waveform pop.
+    const DIM: u16 = 38; // out of 100
+    let (mr, mg, mb) = crate::color::rgb_of(app.theme.bg_sel);
+    let mat = Color::Rgb(
+        (mr as u16 * DIM / 100) as u8,
+        (mg as u16 * DIM / 100) as u8,
+        (mb as u16 * DIM / 100) as u8,
+    );
     let at = |px: u32, py: u32| -> Color {
         if px >= ox && px < ox + fw && py >= oy && py < oy + fh {
             let p = fitted.get_pixel(px - ox, py - oy);
-            Color::Rgb(p[0], p[1], p[2])
+            let d = |c: u8| (c as u16 * DIM / 100) as u8;
+            Color::Rgb(d(p[0]), d(p[1]), d(p[2]))
         } else {
             mat
         }
@@ -91,6 +96,54 @@ fn draw_album_art(f: &mut Frame, app: &App, area: Rect, img: &image::RgbImage) {
             cell.set_char('▀');
             cell.set_fg(top);
             cell.set_bg(bot);
+        }
+    }
+}
+
+/// Draw the static waveform (and live playhead) over an already-painted album
+/// backdrop, at cell resolution so the art shows through behind the trace.
+fn draw_wave_overlay(f: &mut Frame, app: &App, inner: Rect) {
+    let t = &app.theme;
+    let Some(np) = app.now_playing.clone() else {
+        return;
+    };
+    let Some(bins) = app.wave_cache.get(&np) else {
+        return;
+    };
+    if inner.width == 0 || inner.height == 0 || bins.is_empty() {
+        return;
+    }
+    let n = bins.len();
+    let mid = inner.y as f32 + inner.height as f32 / 2.0;
+    let half = inner.height as f32 / 2.0;
+    let y_lo = inner.y;
+    let y_hi = inner.y + inner.height; // exclusive
+
+    let buf = f.buffer_mut();
+    for cx in 0..inner.width {
+        let bi = (cx as usize * n / inner.width as usize).min(n - 1);
+        let (lo, hi) = bins[bi];
+        let top = (mid - hi.clamp(-1.0, 1.0) * half).round() as i32;
+        let bot = (mid - lo.clamp(-1.0, 1.0) * half).round() as i32;
+        for y in top.min(bot)..=top.max(bot) {
+            if y < y_lo as i32 || y >= y_hi as i32 {
+                continue;
+            }
+            let cell = &mut buf[(inner.x + cx, y as u16)];
+            cell.set_char('│');
+            cell.set_fg(t.wave);
+        }
+    }
+
+    // Live playhead (only when this is the playing track and it has a duration).
+    let dur = app.engine.duration_secs();
+    if dur > 0.0 {
+        let frac = (app.engine.position_secs() / dur).clamp(0.0, 1.0);
+        let px = inner.x + (frac * (inner.width.saturating_sub(1)) as f64).round() as u16;
+        for y in y_lo..y_hi {
+            let cell = &mut buf[(px.min(inner.x + inner.width - 1), y)];
+            cell.set_char('│');
+            cell.set_fg(t.playing);
         }
     }
 }
