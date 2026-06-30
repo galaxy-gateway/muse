@@ -40,7 +40,7 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         let block = panel("waveform", border(t, app.frame, t.wave, 0.42));
         let inner = block.inner(rows[1]);
         f.render_widget(block, rows[1]);
-        fill_album_art(f, app, inner, img);
+        fill_album_art(f, app, inner, img, 38);
         draw_wave_overlay(f, app, inner);
     } else {
         draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
@@ -48,10 +48,17 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
     draw_scope(f, app, rows[2]);
 }
 
-/// Fill `inner` with the cover as a **dimmed** backdrop using upper-half-block
-/// (`▀`) cells (two pixels per cell: fg = top, bg = bottom), aspect-fit and
-/// centered on a themed mat. Dimmed so the overlaid waveform stays legible.
-fn fill_album_art(f: &mut Frame, app: &App, inner: Rect, img: &image::RgbImage) {
+/// Fill `inner` with the cover using upper-half-block (`▀`) cells (two pixels
+/// per cell: fg = top, bg = bottom), aspect-fit and centered on a themed mat.
+/// `dim` (out of 100) scales brightness — a dim backdrop behind the waveform,
+/// or full brightness for the detail-panel thumbnails.
+pub(super) fn fill_album_art(
+    f: &mut Frame,
+    app: &App,
+    inner: Rect,
+    img: &image::RgbImage,
+    dim: u16,
+) {
     use ratatui::style::Color;
 
     if inner.width == 0 || inner.height == 0 {
@@ -68,18 +75,16 @@ fn fill_album_art(f: &mut Frame, app: &App, inner: Rect, img: &image::RgbImage) 
     let ox = (cols - fw) / 2;
     let oy = (rows - fh) / 2;
 
-    // Backdrop dim factor: keeps the cover readable but lets the waveform pop.
-    const DIM: u16 = 38; // out of 100
     let (mr, mg, mb) = crate::color::rgb_of(app.theme.bg_sel);
     let mat = Color::Rgb(
-        (mr as u16 * DIM / 100) as u8,
-        (mg as u16 * DIM / 100) as u8,
-        (mb as u16 * DIM / 100) as u8,
+        (mr as u16 * dim / 100) as u8,
+        (mg as u16 * dim / 100) as u8,
+        (mb as u16 * dim / 100) as u8,
     );
     let at = |px: u32, py: u32| -> Color {
         if px >= ox && px < ox + fw && py >= oy && py < oy + fh {
             let p = fitted.get_pixel(px - ox, py - oy);
-            let d = |c: u8| (c as u16 * DIM / 100) as u8;
+            let d = |c: u8| (c as u16 * dim / 100) as u8;
             Color::Rgb(d(p[0]), d(p[1]), d(p[2]))
         } else {
             mat
@@ -212,17 +217,50 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(t.dim),
         ))],
     };
-    let p = Paragraph::new(lines)
-        .block(
-            panel("now playing", border(t, app.frame, t.playing, 0.28))
-                .padding(Padding::horizontal(1)),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    let block =
+        panel("now playing", border(t, app.frame, t.playing, 0.28)).padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    // Cover thumbnail on the left (when available), text to its right.
+    let off = panel_cover_thumb(f, app, inner, app.np_thumb_cols(), app.now_playing.as_ref());
+    let text = Rect {
+        x: inner.x + off,
+        width: inner.width.saturating_sub(off),
+        ..inner
+    };
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), text);
 
     // Copy-path button: right end of the title row. Overlaid after the
     // paragraph so it sits on top of any long title text.
     draw_copy_button(f, app, app.np_copy_btn_rect(), app.np_copy_flashing());
+}
+
+/// Draw a full-brightness cover thumbnail filling the left `off-1` columns of
+/// `inner` (a 1-col gap follows), for the track at `path`. Returns the text
+/// x-offset to use (`off`, or 0 when there's no art). Shared by the now-playing
+/// and selection panels.
+pub(super) fn panel_cover_thumb(
+    f: &mut Frame,
+    app: &App,
+    inner: Rect,
+    off: u16,
+    path: Option<&std::path::PathBuf>,
+) -> u16 {
+    if off < 2 {
+        return 0;
+    }
+    let img = path
+        .and_then(|p| app.wave_art.get(p))
+        .and_then(|o| o.as_ref());
+    let Some(img) = img else { return 0 };
+    let thumb = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: off - 1,
+        height: inner.height,
+    };
+    fill_album_art(f, app, thumb, img, 100);
+    off
 }
 
 /// Overlay a copy-path button glyph at `btn`: a checkmark while flashing, an

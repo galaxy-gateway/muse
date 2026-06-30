@@ -226,13 +226,19 @@ pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {
             )));
         }
     }
-    let p = Paragraph::new(lines)
-        .block(
-            panel("selection", border(t, app.frame, t.accent2, 0.14))
-                .padding(Padding::horizontal(1)),
-        )
-        .wrap(Wrap { trim: true });
-    f.render_widget(p, area);
+    let block =
+        panel("selection", border(t, app.frame, t.accent2, 0.14)).padding(Padding::horizontal(1));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    // Cover thumbnail on the left (when available), detail text to its right.
+    let off =
+        super::inspector::panel_cover_thumb(f, app, inner, app.sel_thumb_cols(), path.as_ref());
+    let text = Rect {
+        x: inner.x + off,
+        width: inner.width.saturating_sub(off),
+        ..inner
+    };
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), text);
 
     // Copy-path button on the selection title row (first inner row).
     super::inspector::draw_copy_button(f, app, app.sel_copy_btn_rect(), app.sel_copy_flashing());

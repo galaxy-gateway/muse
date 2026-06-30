@@ -98,7 +98,24 @@ impl App {
     /// the renderer and hit-test agree without a draw-time write-back.
     pub fn np_copy_btn_rect(&self) -> Option<Rect> {
         let name = self.now_playing_title_text()?;
-        copy_btn_after(self.np_rect, 2, name.chars().count())
+        copy_btn_after(self.np_rect, 2, name.chars().count(), self.np_thumb_cols())
+    }
+
+    /// Width (cells, incl. a 1-col gap) of the now-playing cover thumbnail, or 0.
+    pub fn np_thumb_cols(&self) -> u16 {
+        let has = self
+            .now_playing
+            .as_ref()
+            .is_some_and(|p| matches!(self.wave_art.get(p), Some(Some(_))));
+        thumb_cols(self.np_rect, has)
+    }
+
+    /// Width (cells, incl. a 1-col gap) of the selection cover thumbnail, or 0.
+    pub fn sel_thumb_cols(&self) -> u16 {
+        let has = self
+            .cursor_path()
+            .is_some_and(|p| matches!(self.wave_art.get(&p), Some(Some(_))));
+        thumb_cols(self.sel_rect, has)
     }
 
     /// Screen rect of the selection copy-path button (right end of its title
@@ -106,7 +123,12 @@ impl App {
     /// is too small.
     pub fn sel_copy_btn_rect(&self) -> Option<Rect> {
         let name = self.selection_title_text()?;
-        copy_btn_after(self.sel_rect, 1, name.chars().count())
+        copy_btn_after(
+            self.sel_rect,
+            1,
+            name.chars().count(),
+            self.sel_thumb_cols(),
+        )
     }
 
     /// Whether the now-playing copy button should show its "copied" checkmark.
@@ -154,14 +176,15 @@ impl App {
 /// Copy-button cell placed one space after the title text on a panel's title
 /// row, or `None` when the panel is too small. `title_row` is the title's offset
 /// from the panel top (1 = first inner row, 2 = second, …); `name_cols` is the
-/// title's display width. The panel has a 1-col border + 1-col padding, so text
-/// starts at `panel.x + 2`; the icon clamps to the last interior column for very
-/// long titles so it never lands on the border.
-fn copy_btn_after(panel: Rect, title_row: u16, name_cols: usize) -> Option<Rect> {
+/// title's display width; `text_off` is the cover-thumbnail offset that pushes
+/// the title text right. The panel has a 1-col border + 1-col padding, so text
+/// starts at `panel.x + 2 + text_off`; the icon clamps to the last interior
+/// column for very long titles so it never lands on the border.
+fn copy_btn_after(panel: Rect, title_row: u16, name_cols: usize, text_off: u16) -> Option<Rect> {
     if panel.width < 6 || panel.height < title_row + 2 {
         return None;
     }
-    let text_x = panel.x + 2;
+    let text_x = panel.x + 2 + text_off;
     let last_inner = panel.x + panel.width - 2; // last col before the right border
     let x = (text_x as usize + name_cols + 1).min(last_inner as usize) as u16;
     Some(Rect {
@@ -170,6 +193,21 @@ fn copy_btn_after(panel: Rect, title_row: u16, name_cols: usize) -> Option<Rect>
         width: 1,
         height: 1,
     })
+}
+
+/// Width (cells, including a trailing 1-col gap) of a panel's cover thumbnail,
+/// or 0 when there is no art or the panel is too small. The thumbnail is a
+/// roughly-square half-block image filling the panel's left edge.
+fn thumb_cols(panel: Rect, has_art: bool) -> u16 {
+    if !has_art {
+        return 0;
+    }
+    let inner_w = panel.width.saturating_sub(4); // borders + 1-col padding each side
+    let inner_h = panel.height.saturating_sub(2);
+    if inner_h == 0 || inner_w < 12 {
+        return 0;
+    }
+    ((inner_h * 2).min(inner_w / 3).max(1)) + 1
 }
 
 /// True while `stamp` is within the flash window of the current `frame`.

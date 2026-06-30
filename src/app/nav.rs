@@ -111,6 +111,7 @@ impl App {
             return;
         }
         self.ensure_meta(&path);
+        self.request_art(path.clone());
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
             self.request_waveform(path);
         }
