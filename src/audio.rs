@@ -151,7 +151,7 @@ impl AudioEngine {
                 while let Ok(p) = load_rx.try_recv() {
                     path = p;
                 }
-                if let Ok(dec) = load_track(&path, device_sr) {
+                if let Ok(dec) = load_track_safe(&path, device_sr) {
                     let _ = loaded_tx.send((path, dec));
                 }
             }
@@ -280,7 +280,7 @@ fn decode_loop(
                     // otherwise decode synchronously now.
                     let dec = match preloaded.take() {
                         Some((p, d)) if p == path => Ok(d),
-                        _ => load_track(&path, device_sr),
+                        _ => load_track_safe(&path, device_sr),
                     };
                     if let Ok(dec) = dec {
                         dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
@@ -366,6 +366,16 @@ fn decode_loop(
             thread::sleep(Duration::from_millis(8));
         }
     }
+}
+
+/// Decode `path`, but never let a panic in a codec/resampler escape the
+/// decode/loader thread. A panic there would unwind the thread and kill it; from
+/// then on every `TransportCmd` is dropped silently (the `cmd_tx` receiver is
+/// gone) and playback is dead until the app restarts. Catching it and returning a
+/// normal `Err` leaves a clean stopped state, so the *next* track still plays.
+fn load_track_safe(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load_track(path, device_sr)))
+        .unwrap_or_else(|_| Err(anyhow!("decoder panicked on {}", path.display())))
 }
 
 /// Decode a file to interleaved stereo at the device sample rate.

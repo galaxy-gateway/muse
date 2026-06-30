@@ -47,6 +47,12 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Route panics (incl. background decode threads) to a logfile rather than
+    // stderr: a recoverable decode panic must not corrupt the alternate-screen
+    // TUI. The audio threads catch_unwind and keep running; this just records
+    // what happened for debugging.
+    install_panic_logger();
+
     let (tx, rx) = unbounded::<AppEvent>();
     let mut app = App::new(&dir, tx.clone())?;
 
@@ -76,6 +82,27 @@ fn main() -> Result<()> {
     )?;
     terminal.show_cursor()?;
     res
+}
+
+/// Send panic output to the muse logfile instead of stderr, so a background
+/// decoder panic (which the audio threads catch and recover from) cannot scribble
+/// over the TUI's alternate screen.
+fn install_panic_logger() {
+    use std::io::Write as _;
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(path) = crate::config::log_path() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = writeln!(f, "panic: {info}");
+            }
+        }
+    }));
 }
 
 fn probe(path: Option<PathBuf>) -> Result<()> {

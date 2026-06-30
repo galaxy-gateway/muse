@@ -402,6 +402,13 @@ fn settings_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("", "", "muse").map(|d| d.config_dir().join("config.toml"))
 }
 
+/// Path of the panic log. Background-thread panics (e.g. a decoder choking on a
+/// malformed file) are written here instead of stderr, which would otherwise
+/// corrupt the alternate-screen TUI.
+pub fn log_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "muse").map(|d| d.data_dir().join("muse.log"))
+}
+
 pub fn load_settings() -> Settings {
     settings_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
