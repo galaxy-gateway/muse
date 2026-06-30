@@ -63,6 +63,12 @@ fn main() -> Result<()> {
     // Any-motion mouse tracking (1003) so hover works without a button held.
     let _ = write!(stdout(), "\x1b[?1003h");
     let _ = stdout().flush();
+
+    // Detect terminal graphics support (Kitty/iTerm2/Sixel) for crisp album art,
+    // falling back to Unicode half-blocks. Queried before the input thread starts
+    // so the terminal's response on stdin isn't swallowed by it.
+    app.set_picker(ratatui_image::picker::Picker::from_query_stdio().ok());
+
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     spawn_input(tx.clone());

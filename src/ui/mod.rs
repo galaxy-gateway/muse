@@ -34,21 +34,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(cols[0]);
 
-    // Record click-to-seek hit rects (must mirror draw_inspector's split).
-    let inspector = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Min(5),
-            Constraint::Length(9),
-        ])
-        .split(cols[1]);
-    app.wave_rect = inspector[1];
-    app.transport_rect = root[1];
-    app.scope_rect = inspector[2];
+    // Record hit/draw rects (must mirror draw_inspector's split).
+    let inspector = inspector::inspector_rows(cols[1]);
     app.np_rect = inspector[0];
+    app.wave_rect = inspector[1];
+    app.scope_rect = inspector[2];
+    app.transport_rect = root[1];
     app.sel_rect = left[0];
     app.screen = f.area();
+
+    // (Re)build the cover thumbnail graphics protocols before drawing.
+    app.prepare_art_protos();
 
     draw_selection(f, app, left[0]);
     draw_tree(f, app, left[1]);
@@ -59,6 +55,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let ctx = app.frame_ctx();
     app.theme.effect.overlay(f, &app.sim, &ctx);
     draw_hover_seek(f, app);
+
+    // Render crisp cover thumbnails out-of-band over the cells the panels
+    // reserved — AFTER the particle overlay so it doesn't repaint over them each
+    // frame (which caused image flicker). Skipped while a modal is open so it
+    // doesn't poke through. No-op on non-graphics terminals (half-block inline).
+    if app.graphics_capable && !app.show_help && !app.show_theme && !app.show_queue {
+        if let Some(rect) = app.np_thumb_rect()
+            && let Some((_, _, proto)) = app.np_thumb_proto.as_mut()
+        {
+            f.render_widget(ratatui_image::Image::new(proto), rect);
+        }
+        if let Some(rect) = app.sel_thumb_rect()
+            && let Some((_, _, proto)) = app.sel_thumb_proto.as_mut()
+        {
+            f.render_widget(ratatui_image::Image::new(proto), rect);
+        }
+    }
+
     if app.show_theme {
         draw_theme_modal(f, app);
     }

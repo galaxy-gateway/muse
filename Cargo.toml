@@ -1,6 +1,6 @@
 [package]
 name = "muse"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 
 [dependencies]
@@ -19,6 +19,9 @@ ignore = "0.4.26"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 lofty = "0.24.0"
 ratatui = "0.29"
+# default features off to avoid the chafa C dependency; pure-Rust
+# kitty/iterm2/sixel/halfblock protocols still build.
+ratatui-image = { version = "4", default-features = false, features = ["crossterm"] }
 rtrb = "0.3.4"
 rubato = "3.0.0"
 rustfft = "6.4.1"

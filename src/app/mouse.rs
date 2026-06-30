@@ -118,6 +118,17 @@ impl App {
         thumb_cols(self.sel_rect, has)
     }
 
+    /// Cell rect of the now-playing cover thumbnail (left of the panel inner),
+    /// or `None` when there's no art. Used to place the out-of-band protocol image.
+    pub fn np_thumb_rect(&self) -> Option<Rect> {
+        thumb_rect(self.np_rect, self.np_thumb_cols())
+    }
+
+    /// Cell rect of the selection cover thumbnail, or `None`.
+    pub fn sel_thumb_rect(&self) -> Option<Rect> {
+        thumb_rect(self.sel_rect, self.sel_thumb_cols())
+    }
+
     /// Screen rect of the selection copy-path button (right end of its title
     /// row, the 1st inner row). `None` when the cursor has no path or the panel
     /// is too small.
@@ -208,6 +219,20 @@ fn thumb_cols(panel: Rect, has_art: bool) -> u16 {
         return 0;
     }
     ((inner_h * 2).min(inner_w / 3).max(1)) + 1
+}
+
+/// Cell rect for a panel's cover thumbnail given its `cols` (incl. gap), inside
+/// the panel's 1-col border + 1-col padding. `None` when `cols` is 0.
+fn thumb_rect(panel: Rect, cols: u16) -> Option<Rect> {
+    if cols < 2 {
+        return None;
+    }
+    Some(Rect {
+        x: panel.x + 2,
+        y: panel.y + 1,
+        width: cols - 1,
+        height: panel.height.saturating_sub(2),
+    })
 }
 
 /// True while `stamp` is within the flash window of the current `frame`.

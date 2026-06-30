@@ -100,8 +100,18 @@ pub struct App {
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     pub wave_art: HashMap<PathBuf, Option<image::RgbImage>>,
     pub(super) art_pending: Option<PathBuf>,
-    /// Show album art instead of the static waveform in the inspector (`i`).
-    pub show_art: bool,
+    /// Terminal graphics support (Kitty/iTerm2/Sixel) detected at startup; `None`
+    /// or a half-blocks protocol means we fall back to Unicode half-block art.
+    pub(super) picker: Option<ratatui_image::picker::Picker>,
+    /// True when `picker` is a real pixel protocol (not half-blocks).
+    pub graphics_capable: bool,
+    /// Pre-encoded, fixed-size cover protocols for the now-playing and selection
+    /// thumbnails (path + the rect they were built for + the protocol). Using the
+    /// stateless `Image` widget — which re-emits identical cells each frame, so
+    /// ratatui's diff skips them — avoids the per-frame re-encode flicker of the
+    /// stateful widget. Rebuilt only when the track or the rect changes.
+    pub(super) np_thumb_proto: Option<(PathBuf, Rect, ratatui_image::protocol::Protocol)>,
+    pub(super) sel_thumb_proto: Option<(PathBuf, Rect, ratatui_image::protocol::Protocol)>,
 
     pub now_playing: Option<PathBuf>,
     /// The track playing before the current one, with its playhead at the moment
@@ -221,7 +231,10 @@ impl App {
             wave_gen: 0,
             wave_art: HashMap::new(),
             art_pending: None,
-            show_art: false,
+            picker: None,
+            graphics_capable: false,
+            np_thumb_proto: None,
+            sel_thumb_proto: None,
             now_playing: None,
             prev_track: None,
             queue: Vec::new(),
@@ -364,6 +377,71 @@ impl App {
     pub fn save_state(&self) {
         self.persist();
         self.meta_disk.save();
+    }
+
+    /// Install the terminal-graphics picker detected at startup. A real pixel
+    /// protocol (Kitty/iTerm2/Sixel) enables crisp album art; otherwise we keep
+    /// the Unicode half-block renderer.
+    pub fn set_picker(&mut self, picker: Option<ratatui_image::picker::Picker>) {
+        use ratatui_image::picker::ProtocolType;
+        self.graphics_capable = picker
+            .as_ref()
+            .is_some_and(|p| !matches!(p.protocol_type(), ProtocolType::Halfblocks));
+        self.picker = picker;
+    }
+
+    /// Encode `path`'s cover into a fixed-size graphics protocol for `size`, or
+    /// `None` when there's no pixel-graphics terminal, no room, or the art isn't
+    /// decoded yet.
+    fn make_proto(&self, path: &Path, size: Rect) -> Option<ratatui_image::protocol::Protocol> {
+        if size.width == 0 || size.height == 0 {
+            return None;
+        }
+        let picker = self.picker.as_ref()?;
+        let rgb = match self.wave_art.get(path) {
+            Some(Some(img)) => img.clone(),
+            _ => return None,
+        };
+        let dynimg = image::DynamicImage::ImageRgb8(rgb);
+        picker
+            .new_protocol(dynimg, size, ratatui_image::Resize::Fit(None))
+            .ok()
+    }
+
+    /// (Re)build the cover protocols for the now-playing and selection thumbnails,
+    /// each only when its track or rect changes. Called each frame before drawing.
+    /// No-op on non-graphics terminals (half-block fallback).
+    pub fn prepare_art_protos(&mut self) {
+        if !self.graphics_capable {
+            return;
+        }
+        let np_want = self.now_playing.clone().zip(self.np_thumb_rect());
+        let sel_want = self.cursor_path().zip(self.sel_thumb_rect());
+        // Take each slot out, refresh against what it wants, put it back. Taking
+        // by value avoids holding `&mut self.field` across the `&self` make_proto.
+        let cur = self.np_thumb_proto.take();
+        self.np_thumb_proto = self.refreshed_slot(cur, np_want);
+        let cur = self.sel_thumb_proto.take();
+        self.sel_thumb_proto = self.refreshed_slot(cur, sel_want);
+    }
+
+    /// Keep `current` when its (path, rect) still matches `want`; clear when
+    /// `want` is `None`; otherwise (re)encode — yielding `None` (retry next frame)
+    /// while a present path's art isn't decoded yet.
+    fn refreshed_slot(
+        &self,
+        current: Option<(PathBuf, Rect, ratatui_image::protocol::Protocol)>,
+        want: Option<(PathBuf, Rect)>,
+    ) -> Option<(PathBuf, Rect, ratatui_image::protocol::Protocol)> {
+        let (path, rect) = want?;
+        if current
+            .as_ref()
+            .is_some_and(|(p, r, _)| *p == path && *r == rect)
+        {
+            return current;
+        }
+        self.make_proto(&path, rect)
+            .map(|proto| (path, rect, proto))
     }
 
     /// Whether the fuzzy filter is driving the list (vs. the file tree).

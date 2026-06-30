@@ -18,34 +18,23 @@ use crate::config::{ScopeMode, ScopeStyle, Theme};
 use crate::util::{fmt_time, fmt_time_precise};
 
 pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
-    let rows = Layout::default()
+    let rows = inspector_rows(area);
+    draw_now_playing(f, app, rows[0]);
+    draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
+    draw_scope(f, app, rows[2]);
+}
+
+/// Inspector row rects: now-playing (5), waveform (remainder), scope (9). Shared
+/// by the renderer and `ui::draw` (which records the rects) so they stay in sync.
+pub(super) fn inspector_rows(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5), // "now playing": current track
-            Constraint::Min(5),    // static waveform
-            Constraint::Length(9), // live scope
+            Constraint::Length(5),
+            Constraint::Min(5),
+            Constraint::Length(9),
         ])
-        .split(area);
-
-    draw_now_playing(f, app, rows[0]);
-    // When album art is toggled on and available, render it as a dimmed backdrop
-    // with the waveform drawn over it; otherwise the plain braille waveform.
-    let art = app
-        .show_art
-        .then(|| app.now_playing.as_ref().and_then(|p| app.wave_art.get(p)))
-        .flatten()
-        .and_then(|o| o.as_ref());
-    if let Some(img) = art {
-        let t = &app.theme;
-        let block = panel("waveform", border(t, app.frame, t.wave, 0.42));
-        let inner = block.inner(rows[1]);
-        f.render_widget(block, rows[1]);
-        fill_album_art(f, app, inner, img, 38);
-        draw_wave_overlay(f, app, inner);
-    } else {
-        draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
-    }
-    draw_scope(f, app, rows[2]);
+        .split(area)
 }
 
 /// Fill `inner` with the cover using upper-half-block (`▀`) cells (two pixels
@@ -101,54 +90,6 @@ pub(super) fn fill_album_art(
             cell.set_char('▀');
             cell.set_fg(top);
             cell.set_bg(bot);
-        }
-    }
-}
-
-/// Draw the static waveform (and live playhead) over an already-painted album
-/// backdrop, at cell resolution so the art shows through behind the trace.
-fn draw_wave_overlay(f: &mut Frame, app: &App, inner: Rect) {
-    let t = &app.theme;
-    let Some(np) = app.now_playing.clone() else {
-        return;
-    };
-    let Some(bins) = app.wave_cache.get(&np) else {
-        return;
-    };
-    if inner.width == 0 || inner.height == 0 || bins.is_empty() {
-        return;
-    }
-    let n = bins.len();
-    let mid = inner.y as f32 + inner.height as f32 / 2.0;
-    let half = inner.height as f32 / 2.0;
-    let y_lo = inner.y;
-    let y_hi = inner.y + inner.height; // exclusive
-
-    let buf = f.buffer_mut();
-    for cx in 0..inner.width {
-        let bi = (cx as usize * n / inner.width as usize).min(n - 1);
-        let (lo, hi) = bins[bi];
-        let top = (mid - hi.clamp(-1.0, 1.0) * half).round() as i32;
-        let bot = (mid - lo.clamp(-1.0, 1.0) * half).round() as i32;
-        for y in top.min(bot)..=top.max(bot) {
-            if y < y_lo as i32 || y >= y_hi as i32 {
-                continue;
-            }
-            let cell = &mut buf[(inner.x + cx, y as u16)];
-            cell.set_char('│');
-            cell.set_fg(t.wave);
-        }
-    }
-
-    // Live playhead (only when this is the playing track and it has a duration).
-    let dur = app.engine.duration_secs();
-    if dur > 0.0 {
-        let frac = (app.engine.position_secs() / dur).clamp(0.0, 1.0);
-        let px = inner.x + (frac * (inner.width.saturating_sub(1)) as f64).round() as u16;
-        for y in y_lo..y_hi {
-            let cell = &mut buf[(px.min(inner.x + inner.width - 1), y)];
-            cell.set_char('│');
-            cell.set_fg(t.playing);
         }
     }
 }
@@ -235,10 +176,11 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     draw_copy_button(f, app, app.np_copy_btn_rect(), app.np_copy_flashing());
 }
 
-/// Draw a full-brightness cover thumbnail filling the left `off-1` columns of
-/// `inner` (a 1-col gap follows), for the track at `path`. Returns the text
-/// x-offset to use (`off`, or 0 when there's no art). Shared by the now-playing
-/// and selection panels.
+/// Reserve the left `off-1` columns of `inner` for a cover thumbnail (a 1-col
+/// gap follows), returning the text x-offset (`off`, or 0 when there's no art).
+/// On a pixel-graphics terminal the cells are left blank — the crisp protocol
+/// image is drawn over them out-of-band by `ui::draw`; otherwise it's filled
+/// with the half-block cover here.
 pub(super) fn panel_cover_thumb(
     f: &mut Frame,
     app: &App,
@@ -253,13 +195,15 @@ pub(super) fn panel_cover_thumb(
         .and_then(|p| app.wave_art.get(p))
         .and_then(|o| o.as_ref());
     let Some(img) = img else { return 0 };
-    let thumb = Rect {
-        x: inner.x,
-        y: inner.y,
-        width: off - 1,
-        height: inner.height,
-    };
-    fill_album_art(f, app, thumb, img, 100);
+    if !app.graphics_capable {
+        let thumb = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: off - 1,
+            height: inner.height,
+        };
+        fill_album_art(f, app, thumb, img, 100);
+    }
     off
 }
 
