@@ -1,6 +1,7 @@
 //! muse — a TUI music explorer. `muse [dir]` (defaults to ".").
 
 mod app;
+mod archive;
 mod audio;
 mod color;
 mod config;

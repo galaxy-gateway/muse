@@ -50,6 +50,62 @@ impl DecodedAudio {
     }
 }
 
+/// A seekable, in-memory `MediaSource` over archive-entry bytes, so symphonia
+/// can decode audio that lives inside an archive without it touching disk.
+struct MemSource {
+    data: Arc<Vec<u8>>,
+    pos: u64,
+}
+
+impl MemSource {
+    fn new(data: Arc<Vec<u8>>) -> Self {
+        Self { data, pos: 0 }
+    }
+}
+
+impl std::io::Read for MemSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let pos = self.pos.min(self.data.len() as u64) as usize;
+        let remaining = &self.data[pos..];
+        let n = remaining.len().min(buf.len());
+        buf[..n].copy_from_slice(&remaining[..n]);
+        self.pos = (pos + n) as u64;
+        Ok(n)
+    }
+}
+
+impl std::io::Seek for MemSource {
+    fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        use std::io::SeekFrom;
+        let len = self.data.len() as i64;
+        let base = match from {
+            SeekFrom::Start(p) => {
+                self.pos = p;
+                return Ok(self.pos);
+            }
+            SeekFrom::End(d) => len + d,
+            SeekFrom::Current(d) => self.pos as i64 + d,
+        };
+        if base < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek before start",
+            ));
+        }
+        self.pos = base as u64;
+        Ok(self.pos)
+    }
+}
+
+impl symphonia::core::io::MediaSource for MemSource {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.data.len() as u64)
+    }
+}
+
 /// Owns the cpal stream (kept alive) and the handles the UI reads each frame.
 pub struct AudioEngine {
     cmd_tx: Sender<TransportCmd>,
@@ -380,7 +436,7 @@ fn load_track_safe(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
 
 /// Decode a file to interleaved stereo at the device sample rate.
 fn load_track(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
-    let dec = decode_symphonia(path).or_else(|_| decode_ffmpeg(path))?;
+    let dec = decode_any(path)?;
     if dec.sample_rate == device_sr {
         Ok(dec)
     } else {
@@ -392,19 +448,52 @@ fn load_track(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
     }
 }
 
+/// Decode `path` to interleaved stereo at its native rate, transparently
+/// handling both disk files and in-archive virtual paths (bytes from the
+/// in-memory store). symphonia first, ffmpeg as a fallback.
+fn decode_any(path: &Path) -> Result<DecodedAudio> {
+    if let Some((arc, inner)) = crate::archive::split_virtual(path) {
+        let bytes = crate::archive::read(&arc, &inner)
+            .ok_or_else(|| anyhow!("archive entry unreadable: {inner}"))?;
+        let ext = Path::new(&inner).extension().and_then(|e| e.to_str());
+        let src = Box::new(MemSource::new(bytes.clone()));
+        decode_symphonia_source(src, ext).or_else(|_| decode_ffmpeg_bytes(&bytes))
+    } else {
+        decode_symphonia(path).or_else(|_| decode_ffmpeg(path))
+    }
+}
+
 fn decode_symphonia(path: &Path) -> Result<DecodedAudio> {
+    use symphonia::core::io::MediaSourceStream;
+    let file = File::open(path)?;
+    let src = MediaSourceStream::new(Box::new(file), Default::default());
+    let ext = path.extension().and_then(|e| e.to_str());
+    decode_symphonia_stream(src, ext)
+}
+
+/// Decode from any symphonia `MediaSource` (disk file or in-memory bytes).
+fn decode_symphonia_source(
+    src: Box<dyn symphonia::core::io::MediaSource>,
+    ext: Option<&str>,
+) -> Result<DecodedAudio> {
+    use symphonia::core::io::MediaSourceStream;
+    let mss = MediaSourceStream::new(src, Default::default());
+    decode_symphonia_stream(mss, ext)
+}
+
+fn decode_symphonia_stream(
+    mss: symphonia::core::io::MediaSourceStream,
+    ext: Option<&str>,
+) -> Result<DecodedAudio> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
     use symphonia::core::errors::Error as SymErr;
     use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
 
-    let file = File::open(path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    if let Some(ext) = ext {
         hint.with_extension(ext);
     }
     // enable_gapless makes the demuxer read the MP3 LAME/Xing tag (and the
@@ -505,6 +594,52 @@ fn decode_ffmpeg(path: &Path) -> Result<DecodedAudio> {
     })
 }
 
+/// ffmpeg fallback for in-archive entries: pipe the in-memory bytes through
+/// stdin (`-i pipe:0`) so nothing is written to disk. stdin is written on a
+/// separate thread to avoid a pipe-buffer deadlock against stdout.
+fn decode_ffmpeg_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let sr = 48000u32;
+    let mut child = Command::new("ffmpeg")
+        .args([
+            "-v", "error", "-i", "pipe:0", "-f", "f32le", "-ac", "2", "-ar", "48000", "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("no ffmpeg stdin"))?;
+    let data = bytes.to_vec();
+    let writer = thread::spawn(move || {
+        let _ = stdin.write_all(&data);
+        // drop(stdin) closes the pipe so ffmpeg sees EOF
+    });
+    let out = child.wait_with_output()?;
+    let _ = writer.join();
+    if !out.status.success() {
+        return Err(anyhow!(
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let mut samples = Vec::with_capacity(out.stdout.len() / 4);
+    for c in out.stdout.chunks_exact(4) {
+        samples.push(f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    }
+    if samples.is_empty() {
+        return Err(anyhow!("ffmpeg produced no audio"));
+    }
+    Ok(DecodedAudio {
+        sample_rate: sr,
+        samples,
+    })
+}
+
 /// Cheap linear-interpolation resampler for interleaved stereo.
 /// Resample interleaved-stereo f32 from `from` Hz to `to` Hz. Uses a windowed-
 /// sinc (rubato) for clean band-limited conversion; falls back to linear
@@ -577,7 +712,7 @@ fn resample_linear(input: &[f32], from: u32, to: u32) -> Vec<f32> {
 
 /// Compute `n_bins` (min,max) mono peak bins for a whole file (static waveform).
 pub fn waveform_bins(path: &Path, n_bins: usize) -> Result<Vec<(f32, f32)>> {
-    let dec = decode_symphonia(path).or_else(|_| decode_ffmpeg(path))?;
+    let dec = decode_any(path)?;
     let frames = dec.frames();
     if frames == 0 {
         return Ok(vec![(0.0, 0.0); n_bins]);

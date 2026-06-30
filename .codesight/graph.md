@@ -21,7 +21,7 @@
 - `src/effects/snow.rs` — imported by **1** files
 - `src/effects/starfield.rs` — imported by **1** files
 - `src/app.rs` — imported by **1** files
-- `src/audio.rs` — imported by **1** files
+- `src/archive.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 

@@ -101,9 +101,24 @@ fn read_audio_meta(path: &Path) -> Meta {
     use lofty::tag::{Accessor, ItemKey};
 
     let mut meta = Meta::default();
-    let tagged = match lofty::read_from_path(path) {
-        Ok(t) => t,
-        Err(_) => return meta,
+    // In-archive entries read their tags from the in-memory bytes (probed for
+    // type) rather than the disk path, which doesn't exist as a real file.
+    let tagged = if let Some((arc, inner)) = crate::archive::split_virtual(path) {
+        let opt = crate::archive::read(&arc, &inner).and_then(|bytes| {
+            lofty::probe::Probe::new(std::io::Cursor::new(bytes.as_slice()))
+                .guess_file_type()
+                .ok()
+                .and_then(|p| p.read().ok())
+        });
+        match opt {
+            Some(t) => t,
+            None => return meta,
+        }
+    } else {
+        match lofty::read_from_path(path) {
+            Ok(t) => t,
+            Err(_) => return meta,
+        }
     };
     let props = tagged.properties();
     meta.duration = props.duration().as_secs_f64();

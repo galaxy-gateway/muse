@@ -3,8 +3,8 @@
 > **Stack:** raw-http | none | unknown | rust
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
-> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,200 tokens. **Saves ~7,500 tokens per conversation.**
-> **Last scanned:** 2026-06-30 06:48 — re-run after significant changes
+> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,400 tokens. **Saves ~7,700 tokens per conversation.**
+> **Last scanned:** 2026-06-30 21:46 — re-run after significant changes
 
 ---
 
@@ -39,7 +39,7 @@
 - `src/effects/snow.rs` — imported by **1** files
 - `src/effects/starfield.rs` — imported by **1** files
 - `src/app.rs` — imported by **1** files
-- `src/audio.rs` — imported by **1** files
+- `src/archive.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 

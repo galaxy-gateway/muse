@@ -6,6 +6,7 @@ use std::thread;
 
 use super::App;
 use crate::event::AppEvent;
+use crate::model::NodeId;
 
 /// Number of static-waveform bins computed per track (resolution-independent).
 const WAVE_BINS: usize = 1600;
@@ -39,6 +40,7 @@ impl App {
         let Some(id) = self.cursor() else { return };
         let node = self.tree.node(id);
         if node.is_dir && node.expanded {
+            self.close_archive_if_any(id);
             self.tree.nodes[id].expanded = false;
             self.refilter_keep();
         } else if let Some(parent) = node.parent {
@@ -62,7 +64,11 @@ impl App {
         let node = self.tree.node(id);
         if node.is_dir {
             let expanded = node.expanded;
-            self.tree.scan(id, &self.registry);
+            if expanded {
+                self.close_archive_if_any(id);
+            } else {
+                self.tree.scan(id, &self.registry);
+            }
             self.tree.nodes[id].expanded = !expanded;
             self.refilter_keep();
         } else if node.is_media {
@@ -71,6 +77,16 @@ impl App {
         } else if self.registry.is_playlist(&node.path) {
             let path = node.path.clone();
             self.load_m3u(path);
+        }
+    }
+
+    /// If `id` is an archive node being collapsed, wipe its decompressed bytes
+    /// from memory and drop its built subtree so re-expanding re-lists fresh.
+    fn close_archive_if_any(&mut self, id: NodeId) {
+        if self.tree.node(id).is_archive {
+            let path = self.tree.node(id).path.clone();
+            crate::archive::close(&path);
+            self.tree.nodes[id].children = None;
         }
     }
 
