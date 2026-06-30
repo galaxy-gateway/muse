@@ -146,9 +146,15 @@ impl AudioEngine {
         let dur_frames = Arc::new(AtomicU64::new(0));
         let playing = Arc::new(AtomicBool::new(false));
         let volume = Arc::new(AtomicU32::new(0.8f32.to_bits()));
+        // Bumped by the decode thread on every Open so the cpal callback drops
+        // the previous track's buffered tail at once — a manual song switch is
+        // instant instead of playing out ~250ms of stale audio first.
+        let flush_gen = Arc::new(AtomicU64::new(0));
 
         // --- cpal output callback (real-time thread) ------------------------
         let vol_cb = volume.clone();
+        let flush_cb = flush_gen.clone();
+        let mut last_flush = 0u64;
         let scope_cap = SCOPE_LEN * 2; // interleaved stereo
         let mut scope_ring = vec![0f32; scope_cap];
         let mut block: Vec<f32> = Vec::with_capacity(8192);
@@ -159,6 +165,13 @@ impl AudioEngine {
             cpal::SampleFormat::F32 => device.build_output_stream(
                 config.into(),
                 move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    // On a switch, discard the stale buffered tail so the new
+                    // track starts immediately (the decode thread refills after).
+                    let fg = flush_cb.load(Ordering::Relaxed);
+                    if fg != last_flush {
+                        while consumer.pop().is_ok() {}
+                        last_flush = fg;
+                    }
                     let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed));
                     block.clear();
                     for frame in out.chunks_mut(out_channels) {
@@ -227,7 +240,7 @@ impl AudioEngine {
             thread::spawn(move || {
                 decode_loop(
                     cmd_rx, loaded_rx, advance_tx, producer, device_sr, playing, volume,
-                    pos_frames, dur_frames,
+                    pos_frames, dur_frames, flush_gen,
                 );
             });
         }
@@ -300,6 +313,7 @@ fn decode_loop(
     volume: Arc<AtomicU32>,
     pos_frames: Arc<AtomicU64>,
     dur_frames: Arc<AtomicU64>,
+    flush_gen: Arc<AtomicU64>,
 ) {
     let mut audio: Option<DecodedAudio> = None;
     let mut cursor: usize = 0; // frame index into the current track
@@ -312,26 +326,37 @@ fn decode_loop(
         while let Ok(item) = loaded_rx.try_recv() {
             preloaded = Some(item);
         }
-        // Drain all pending commands first.
-        let mut got_cmd = false;
+        // Drain all pending commands into a batch. Coalescing here is what keeps
+        // rapid song-switching responsive: only the LAST Open is actually decoded
+        // (the expensive part), so a burst of switches never backs up the bounded
+        // command channel and blocks the UI thread — earlier Opens are dropped.
+        let mut cmds = Vec::new();
         while let Ok(cmd) = cmd_rx.try_recv() {
-            got_cmd = true;
+            cmds.push(cmd);
+        }
+        let got_cmd = !cmds.is_empty();
+        let last_open = cmds
+            .iter()
+            .rposition(|c| matches!(c, TransportCmd::Open(_)));
+        for (i, cmd) in cmds.into_iter().enumerate() {
             match cmd {
                 TransportCmd::Open(path) => {
+                    // Skip every superseded Open without decoding it.
+                    if Some(i) != last_open {
+                        continue;
+                    }
                     // Reset transport up-front so a failed decode leaves a clean
                     // stopped state (dur = 0) rather than stale values, which
                     // would otherwise make the UI's end-of-track detector fire
                     // every tick and storm-advance through the list.
-                    //
-                    // The output ring is intentionally not cleared: any tail of
-                    // the previous track plays out and the new track's samples
-                    // follow contiguously, which is what makes the boundary
-                    // seamless when the next track was preloaded.
                     audio = None;
                     cursor = 0;
                     pos_frames.store(0, Ordering::Relaxed);
                     dur_frames.store(0, Ordering::Relaxed);
                     playing.store(false, Ordering::Relaxed);
+                    // Flush the previous track's buffered tail so the switch is
+                    // immediate (no stale audio plays out first).
+                    flush_gen.fetch_add(1, Ordering::Relaxed);
                     // Use the preloaded buffer if it matches (no decode latency);
                     // otherwise decode synchronously now.
                     let dec = match preloaded.take() {
