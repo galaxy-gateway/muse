@@ -4,9 +4,11 @@
 
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 /// Ordered, typed-ish metadata so unrelated media can expose different fields
 /// while the inspector / future diff view stay generic.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Meta {
     pub title: String,
     pub artist: String,

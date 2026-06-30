@@ -8,6 +8,7 @@ mod config;
 mod effects;
 mod event;
 mod media;
+mod metacache;
 mod model;
 mod particles;
 mod spectrum;

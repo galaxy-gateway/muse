@@ -90,6 +90,9 @@ pub struct App {
     pub list_state: ListState,
 
     pub meta_cache: HashMap<PathBuf, Meta>,
+    /// Persistent on-disk tag cache (path+size+mtime keyed); backs `meta_cache`
+    /// so re-launches skip re-parsing unchanged files.
+    pub(super) meta_disk: crate::metacache::MetaCache,
     pub wave_cache: HashMap<PathBuf, Vec<(f32, f32)>>,
     pub wave_pending: Option<PathBuf>,
     pub wave_gen: u64,
@@ -206,6 +209,7 @@ impl App {
             frame: 0,
             list_state,
             meta_cache: HashMap::new(),
+            meta_disk: crate::metacache::MetaCache::load(),
             wave_cache: HashMap::new(),
             wave_pending: None,
             wave_gen: 0,
@@ -350,6 +354,7 @@ impl App {
     /// Persist the full state on exit (call from `main` after the event loop).
     pub fn save_state(&self) {
         self.persist();
+        self.meta_disk.save();
     }
 
     /// Whether the fuzzy filter is driving the list (vs. the file tree).

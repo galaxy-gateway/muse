@@ -110,14 +110,34 @@ impl App {
         if !self.registry.is_supported(&path) {
             return;
         }
-        if !self.meta_cache.contains_key(&path) {
-            if let Some(p) = self.registry.for_path(&path) {
-                self.meta_cache.insert(path.clone(), p.metadata(&path));
-            }
-        }
+        self.ensure_meta(&path);
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
             self.request_waveform(path);
         }
+    }
+
+    /// Make sure `meta_cache` holds tags for `path`, sourcing them from the
+    /// persistent disk cache (validated by size+mtime) when possible and only
+    /// re-parsing the file on a cache miss.
+    pub(super) fn ensure_meta(&mut self, path: &std::path::Path) {
+        if self.meta_cache.contains_key(path) || !self.registry.is_supported(path) {
+            return;
+        }
+        let stamp = crate::metacache::file_stamp(path);
+        if let Some((size, mtime)) = stamp
+            && let Some(meta) = self.meta_disk.get(path, size, mtime)
+        {
+            self.meta_cache.insert(path.to_path_buf(), meta.clone());
+            return;
+        }
+        let Some(provider) = self.registry.for_path(path) else {
+            return;
+        };
+        let meta = provider.metadata(path);
+        if let Some((size, mtime)) = stamp {
+            self.meta_disk.put(path, size, mtime, meta.clone());
+        }
+        self.meta_cache.insert(path.to_path_buf(), meta);
     }
 
     pub(super) fn request_waveform(&mut self, path: PathBuf) {

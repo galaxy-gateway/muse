@@ -76,6 +76,9 @@ impl App {
         self.now_playing = Some(path.clone());
         // The engine is (or is about to be) playing; arm end-of-track detection.
         self.prev_playing = true;
+        // Ensure now-playing tags are loaded (cached) before pushing OS metadata,
+        // since auto-advance may reach a track the cursor never selected.
+        self.ensure_meta(&path);
         self.push_media_metadata();
         // Ensure the now-playing waveform is computed even when playback was
         // started by auto-advance / next-prev (no tree selection change).
