@@ -15,7 +15,7 @@ use super::widgets::{border, panel, panel_hint};
 use crate::app::App;
 use crate::color::mix;
 use crate::config::{ScopeMode, ScopeStyle, Theme};
-use crate::util::{fmt_time, fmt_time_precise};
+use crate::util::fmt_time;
 
 pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
     let rows = inspector_rows(area);
@@ -117,18 +117,17 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 ("⏸ paused", t.dim)
             };
-            // line 1: state + live position (millisecond precision) / duration
+            // Line 1: state + total duration. Deliberately STATIC (no live
+            // position here) — a per-frame-changing clock on these rows makes the
+            // adjacent terminal-graphics cover thumbnail flicker on iTerm2. The
+            // live playhead lives in the transport bar and the waveform.
             let time = Line::from(vec![
                 Span::styled(
-                    format!("{}  ", state.0),
+                    format!("{}   ", state.0),
                     Style::default().fg(state.1).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    fmt_time_precise(app.engine.position_secs()),
-                    Style::default().fg(t.media).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!(" / {}", fmt_time(app.engine.duration_secs())),
+                    fmt_time(app.engine.duration_secs()),
                     Style::default().fg(t.dim),
                 ),
             ]);
