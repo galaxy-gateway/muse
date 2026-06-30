@@ -1,6 +1,6 @@
 [package]
 name = "muse"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2024"
 
 [dependencies]
@@ -16,6 +16,7 @@ crossterm = "0.28"
 directories = "6.0.0"
 flate2 = "1.1.9"
 ignore = "0.4.26"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 lofty = "0.24.0"
 ratatui = "0.29"
 rtrb = "0.3.4"

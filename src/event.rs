@@ -13,6 +13,8 @@ pub enum AppEvent {
     Tick,
     /// Background waveform result: (path, generation token, bins).
     Wave(PathBuf, u64, Vec<(f32, f32)>),
+    /// Background album-art result: (path, decoded cover or `None` if absent).
+    Art(PathBuf, Option<image::RgbImage>),
     /// Full recursive media-file index for fuzzy filtering (built off-thread).
     Index(Vec<PathBuf>),
     /// OS media-key / now-playing control event (souvlaki).

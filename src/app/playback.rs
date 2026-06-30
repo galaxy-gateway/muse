@@ -83,8 +83,9 @@ impl App {
         // Ensure the now-playing waveform is computed even when playback was
         // started by auto-advance / next-prev (no tree selection change).
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
-            self.request_waveform(path);
+            self.request_waveform(path.clone());
         }
+        self.request_art(path);
         // Maintain the shuffle bag (drop the now-playing track, refill if dry).
         self.shuffle_after_play();
         // Decode the track auto-advance will play next, so its boundary is gapless.

@@ -97,6 +97,12 @@ pub struct App {
     pub wave_pending: Option<PathBuf>,
     pub wave_gen: u64,
 
+    /// Decoded embedded cover art per track (`None` = no art); built off-thread.
+    pub wave_art: HashMap<PathBuf, Option<image::RgbImage>>,
+    pub(super) art_pending: Option<PathBuf>,
+    /// Show album art instead of the static waveform in the inspector (`i`).
+    pub show_art: bool,
+
     pub now_playing: Option<PathBuf>,
     /// The track playing before the current one, with its playhead at the moment
     /// we switched away — lets `u` jump back and resume (undo an accidental click).
@@ -213,6 +219,9 @@ impl App {
             wave_cache: HashMap::new(),
             wave_pending: None,
             wave_gen: 0,
+            wave_art: HashMap::new(),
+            art_pending: None,
+            show_art: false,
             now_playing: None,
             prev_track: None,
             queue: Vec::new(),
@@ -456,6 +465,12 @@ impl App {
                 self.wave_cache.insert(path.clone(), bins);
                 if self.wave_pending.as_ref() == Some(&path) {
                     self.wave_pending = None;
+                }
+            }
+            AppEvent::Art(path, art) => {
+                self.wave_art.insert(path.clone(), art);
+                if self.art_pending.as_ref() == Some(&path) {
+                    self.art_pending = None;
                 }
             }
             AppEvent::Index(files) => {

@@ -28,8 +28,71 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     draw_now_playing(f, app, rows[0]);
-    draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
+    // The middle panel shows album art when toggled on and the now-playing
+    // track has embedded cover art; otherwise the static waveform.
+    let art = app
+        .show_art
+        .then(|| app.now_playing.as_ref().and_then(|p| app.wave_art.get(p)))
+        .flatten()
+        .and_then(|o| o.as_ref());
+    if let Some(img) = art {
+        draw_album_art(f, app, rows[1], img);
+    } else {
+        draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
+    }
     draw_scope(f, app, rows[2]);
+}
+
+/// Render an album cover into `area` using upper-half-block (`▀`) cells: each
+/// cell packs two vertical pixels (fg = top, bg = bottom), so the resolution is
+/// `inner_w x 2*inner_h`. The cover is aspect-fit and centered on a themed mat.
+fn draw_album_art(f: &mut Frame, app: &App, area: Rect, img: &image::RgbImage) {
+    use ratatui::style::Color;
+
+    let t = &app.theme;
+    let block = panel("album art", border(t, app.frame, t.wave, 0.42));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let cols = inner.width as u32;
+    let rows = inner.height as u32 * 2; // two pixels per cell vertically
+
+    // Aspect-fit the cover within cols x rows (cells are ~2x taller than wide,
+    // already accounted for by the 2x vertical pixel density).
+    let (iw, ih) = (img.width().max(1), img.height().max(1));
+    let scale = (cols as f32 / iw as f32).min(rows as f32 / ih as f32);
+    let fw = ((iw as f32 * scale).round() as u32).clamp(1, cols);
+    let fh = ((ih as f32 * scale).round() as u32).clamp(1, rows);
+    let fitted = image::imageops::resize(img, fw, fh, image::imageops::FilterType::Triangle);
+    let ox = (cols - fw) / 2;
+    let oy = (rows - fh) / 2;
+
+    let (mr, mg, mb) = crate::color::rgb_of(t.bg_sel);
+    let mat = Color::Rgb(mr as u8, mg as u8, mb as u8);
+    // Sample the fitted image (or the mat outside it) for pixel (px, py).
+    let at = |px: u32, py: u32| -> Color {
+        if px >= ox && px < ox + fw && py >= oy && py < oy + fh {
+            let p = fitted.get_pixel(px - ox, py - oy);
+            Color::Rgb(p[0], p[1], p[2])
+        } else {
+            mat
+        }
+    };
+
+    let buf = f.buffer_mut();
+    for cy in 0..inner.height {
+        for cx in 0..inner.width {
+            let px = cx as u32;
+            let top = at(px, cy as u32 * 2);
+            let bot = at(px, cy as u32 * 2 + 1);
+            let cell = &mut buf[(inner.x + cx, inner.y + cy)];
+            cell.set_char('▀');
+            cell.set_fg(top);
+            cell.set_bg(bot);
+        }
+    }
 }
 
 /// "Now playing": the track the engine is actually playing, distinct from the

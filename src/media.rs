@@ -201,3 +201,14 @@ fn codec_name(ft: lofty::file::FileType) -> String {
     }
     .to_string()
 }
+
+/// Raw bytes of the first embedded cover-art picture in `path`'s tags, if any.
+/// The bytes are still encoded (JPEG/PNG/...); the caller decodes them.
+pub fn cover_art_bytes(path: &Path) -> Option<Vec<u8>> {
+    use lofty::file::TaggedFileExt;
+
+    let tagged = lofty::read_from_path(path).ok()?;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+    let pic = tag.pictures().first()?;
+    Some(pic.data().to_vec())
+}

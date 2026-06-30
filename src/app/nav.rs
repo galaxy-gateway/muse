@@ -151,4 +151,22 @@ impl App {
             }
         });
     }
+
+    /// Decode embedded cover art off-thread (bounded to 512px) and post it back.
+    pub(super) fn request_art(&mut self, path: PathBuf) {
+        if self.wave_art.contains_key(&path) || self.art_pending.as_ref() == Some(&path) {
+            return;
+        }
+        self.art_pending = Some(path.clone());
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            let art = crate::media::cover_art_bytes(&path)
+                .and_then(|bytes| image::load_from_memory(&bytes).ok())
+                .map(|img| {
+                    // Bound the cached image; it's downscaled again per render.
+                    img.thumbnail(512, 512).to_rgb8()
+                });
+            let _ = tx.send(AppEvent::Art(path, art));
+        });
+    }
 }
