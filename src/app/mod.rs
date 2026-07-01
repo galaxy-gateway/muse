@@ -201,6 +201,8 @@ pub struct App {
     /// `scan_done < scan_total` a progress bar shows and the tree is filling in.
     pub scan_done: usize,
     pub scan_total: usize,
+    /// Persistent recursive dir-stats cache — instant relaunch for big libraries.
+    pub(super) dir_cache: crate::dircache::DirCache,
     pub should_quit: bool,
 
     /// OS media-key integration (now-playing controls). `None` if unavailable.
@@ -214,9 +216,17 @@ pub struct App {
 impl App {
     pub fn new(root: &Path, tx: Sender<AppEvent>) -> anyhow::Result<Self> {
         let registry = Registry::new();
-        let tree = TreeModel::new(root, &registry);
-        // Every top-level dir/archive starts `pending`; the background stats
-        // worker (spawned from `main`) fills them in and this counts down.
+        let mut tree = TreeModel::new(root, &registry);
+        // Apply cached recursive stats for any top-level dir whose contents are
+        // unchanged since last run — those show instantly (no dim, no re-walk).
+        // The remaining (cache-miss) dirs stay `pending` for the background scan.
+        let dir_cache = crate::dircache::DirCache::load();
+        for p in tree.pending_paths() {
+            if let Some((count, size)) = dir_cache.get_fresh(&p) {
+                tree.apply_stats(&p, count, size);
+            }
+        }
+        tree.rebuild_visible();
         let scan_total = tree.pending_paths().len();
         let engine = AudioEngine::new()?;
         let spectrum = SpectrumState::new(engine.sample_rate());
@@ -317,6 +327,7 @@ impl App {
             config_sel: 0,
             scan_done: 0,
             scan_total,
+            dir_cache,
             media: init_media(&tx),
             media_playing: false,
             should_quit: false,
@@ -426,6 +437,7 @@ impl App {
     pub fn save_state(&self) {
         self.persist();
         self.meta_disk.save();
+        self.dir_cache.save();
     }
 
     /// Install the terminal-graphics picker detected at startup. A real pixel
@@ -639,6 +651,9 @@ impl App {
             } => {
                 self.scan_done = scanned;
                 self.scan_total = total;
+                // Cache the freshly-computed stat so this dir loads instantly next
+                // launch (stamped with its current mtime).
+                self.dir_cache.insert(&path, count, size);
                 // Only a stats result that hides a dir (count 0) changes the
                 // visible list; apply + re-flatten, keeping the cursor on the
                 // same item where possible.

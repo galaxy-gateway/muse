@@ -6,6 +6,7 @@ mod audio;
 mod beat;
 mod color;
 mod config;
+mod dircache;
 mod effects;
 mod event;
 mod media;
