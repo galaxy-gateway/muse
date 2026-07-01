@@ -105,13 +105,13 @@ pub struct App {
     pub(super) picker: Option<ratatui_image::picker::Picker>,
     /// True when `picker` is a real pixel protocol (not half-blocks).
     pub graphics_capable: bool,
-    /// Pre-encoded, fixed-size cover protocols for the now-playing and selection
-    /// thumbnails (path + the rect they were built for + the protocol). Using the
-    /// stateless `Image` widget — which re-emits identical cells each frame, so
-    /// ratatui's diff skips them — avoids the per-frame re-encode flicker of the
-    /// stateful widget. Rebuilt only when the track or the rect changes.
+    /// Pre-encoded, fixed-size cover protocol for the NOW-PLAYING thumbnail only
+    /// (path + the rect it was built for + the protocol). Only one graphics image
+    /// is rendered at a time — two on screen at once make some terminals flicker
+    /// badly — so the selection panel uses the half-block thumbnail instead.
+    /// Stateless `Image` re-emits identical cells each frame (diff-skipped),
+    /// rebuilt only when the track or the rect changes.
     pub(super) np_thumb_proto: Option<(PathBuf, Rect, ratatui_image::protocol::Protocol)>,
-    pub(super) sel_thumb_proto: Option<(PathBuf, Rect, ratatui_image::protocol::Protocol)>,
 
     pub now_playing: Option<PathBuf>,
     /// The track playing before the current one, with its playhead at the moment
@@ -234,7 +234,6 @@ impl App {
             picker: None,
             graphics_capable: false,
             np_thumb_proto: None,
-            sel_thumb_proto: None,
             now_playing: None,
             prev_track: None,
             queue: Vec::new(),
@@ -415,14 +414,12 @@ impl App {
         if !self.graphics_capable {
             return;
         }
+        // Only the now-playing image is a graphics protocol (one at a time).
         let np_want = self.now_playing.clone().zip(self.np_thumb_rect());
-        let sel_want = self.cursor_path().zip(self.sel_thumb_rect());
-        // Take each slot out, refresh against what it wants, put it back. Taking
-        // by value avoids holding `&mut self.field` across the `&self` make_proto.
+        // Take the slot out, refresh, put it back — avoids holding `&mut field`
+        // across the `&self` make_proto.
         let cur = self.np_thumb_proto.take();
         self.np_thumb_proto = self.refreshed_slot(cur, np_want);
-        let cur = self.sel_thumb_proto.take();
-        self.sel_thumb_proto = self.refreshed_slot(cur, sel_want);
     }
 
     /// Keep `current` when its (path, rect) still matches `want`; clear when

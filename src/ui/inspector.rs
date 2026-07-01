@@ -162,7 +162,14 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     // Cover thumbnail on the left (when available), text to its right.
-    let off = panel_cover_thumb(f, app, inner, app.np_thumb_cols(), app.now_playing.as_ref());
+    let off = panel_cover_thumb(
+        f,
+        app,
+        inner,
+        app.np_thumb_cols(),
+        app.now_playing.as_ref(),
+        true,
+    );
     let text = Rect {
         x: inner.x + off,
         width: inner.width.saturating_sub(off),
@@ -177,15 +184,17 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
 
 /// Reserve the left `off-1` columns of `inner` for a cover thumbnail (a 1-col
 /// gap follows), returning the text x-offset (`off`, or 0 when there's no art).
-/// On a pixel-graphics terminal the cells are left blank — the crisp protocol
-/// image is drawn over them out-of-band by `ui::draw`; otherwise it's filled
-/// with the half-block cover here.
+/// When `protocol` is true on a pixel-graphics terminal the cells are left blank
+/// — the crisp protocol image is drawn over them out-of-band by `ui::draw` (only
+/// the now-playing panel does this). Otherwise it's filled with the half-block
+/// cover here (the selection panel always uses half-blocks).
 pub(super) fn panel_cover_thumb(
     f: &mut Frame,
     app: &App,
     inner: Rect,
     off: u16,
     path: Option<&std::path::PathBuf>,
+    protocol: bool,
 ) -> u16 {
     if off < 2 {
         return 0;
@@ -194,7 +203,7 @@ pub(super) fn panel_cover_thumb(
         .and_then(|p| app.wave_art.get(p))
         .and_then(|o| o.as_ref());
     let Some(img) = img else { return 0 };
-    if !app.graphics_capable {
+    if !(protocol && app.graphics_capable) {
         let thumb = Rect {
             x: inner.x,
             y: inner.y,

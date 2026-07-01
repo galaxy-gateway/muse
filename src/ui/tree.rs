@@ -231,8 +231,16 @@ pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     // Cover thumbnail on the left (when available), detail text to its right.
-    let off =
-        super::inspector::panel_cover_thumb(f, app, inner, app.sel_thumb_cols(), path.as_ref());
+    // Half-blocks (protocol = false): only the now-playing panel uses a graphics
+    // image, so at most one is on screen at a time.
+    let off = super::inspector::panel_cover_thumb(
+        f,
+        app,
+        inner,
+        app.sel_thumb_cols(),
+        path.as_ref(),
+        false,
+    );
     let text = Rect {
         x: inner.x + off,
         width: inner.width.saturating_sub(off),

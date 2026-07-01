@@ -60,14 +60,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // reserved — AFTER the particle overlay so it doesn't repaint over them each
     // frame (which caused image flicker). Skipped while a modal is open so it
     // doesn't poke through. No-op on non-graphics terminals (half-block inline).
+    // Only the now-playing cover is drawn as a graphics image — rendering two at
+    // once flickers on some terminals. The selection panel uses half-blocks.
     if app.graphics_capable && !app.show_help && !app.show_theme && !app.show_queue {
         if let Some(rect) = app.np_thumb_rect()
             && let Some((_, _, proto)) = app.np_thumb_proto.as_mut()
-        {
-            f.render_widget(ratatui_image::Image::new(proto), rect);
-        }
-        if let Some(rect) = app.sel_thumb_rect()
-            && let Some((_, _, proto)) = app.sel_thumb_proto.as_mut()
         {
             f.render_widget(ratatui_image::Image::new(proto), rect);
         }

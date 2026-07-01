@@ -124,11 +124,6 @@ impl App {
         thumb_rect(self.np_rect, self.np_thumb_cols())
     }
 
-    /// Cell rect of the selection cover thumbnail, or `None`.
-    pub fn sel_thumb_rect(&self) -> Option<Rect> {
-        thumb_rect(self.sel_rect, self.sel_thumb_cols())
-    }
-
     /// Screen rect of the selection copy-path button (right end of its title
     /// row, the 1st inner row). `None` when the cursor has no path or the panel
     /// is too small.
