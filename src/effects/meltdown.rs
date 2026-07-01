@@ -129,6 +129,7 @@ impl ThemeEffect for Meltdown {
             intensity: 0.5,
             persistence: 0.35,
             disruption: 0.25,
+            ..Default::default()
         }
     }
 

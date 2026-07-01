@@ -33,8 +33,8 @@ impl ThemeEffect for Glitch {
     fn default_tuning(&self) -> Tuning {
         Tuning {
             intensity: 0.65,
-            persistence: 0.0,
             disruption: 0.55,
+            ..Default::default()
         }
     }
 

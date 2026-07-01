@@ -267,14 +267,19 @@ impl App {
     }
 
     /// Nudge the highlighted knob of the highlighted theme. Changes are live and
-    /// saved immediately (no separate apply step).
+    /// saved immediately (no separate apply step). Toggle knobs flip: `→`/positive
+    /// = on, `←`/negative = off.
     fn config_adjust(&mut self, delta: f32) {
         let knobs = self.sel_knobs();
         let Some(&k) = knobs.get(self.config_sel) else {
             return; // on the "reset" row — nothing to nudge
         };
-        let cur = self.tunings[self.theme_sel].get(k);
-        self.tunings[self.theme_sel].set(k, cur + delta);
+        let next = if k.kind() == crate::effects::KnobKind::Toggle {
+            if delta > 0.0 { 1.0 } else { 0.0 }
+        } else {
+            self.tunings[self.theme_sel].get(k) + delta
+        };
+        self.tunings[self.theme_sel].set(k, next);
         self.persist();
     }
 

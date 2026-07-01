@@ -27,53 +27,136 @@ mod sakura;
 mod snow;
 mod starfield;
 
-/// One user-tunable knob on a configurable theme. Every knob is a 0..1 float so
-/// the theme modal can edit them all with one generic bar widget.
+/// How a knob is edited/displayed in the theme modal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum KnobKind {
+    /// Continuous 0..1, shown as a bar.
+    Range,
+    /// Boolean, stored as 0.0/1.0, shown as `on`/`off`.
+    Toggle,
+}
+
+/// One user-tunable knob on a configurable theme. Values live on `Tuning` (all
+/// stored as f32 — a `Toggle` is just 0.0/1.0 so one editor handles both kinds).
+// Several variants are wired per-theme in Phase 2; allow until then.
+#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Knob {
-    /// Overall amount / frequency of glitching.
+    /// Overall amount / density / frequency of the effect.
     Intensity,
-    /// Trail length — how long corruption lingers before healing (meltdown).
+    /// Animation rate.
+    Speed,
+    /// How many particles/elements are alive at once.
+    Density,
+    /// How strongly the theme reacts to the beat. 0 = pure ambient (no beat
+    /// coupling) — the universal "calm it down" / off switch.
+    BeatSync,
+    /// Horizontal drift strength (snow, sakura).
+    Wind,
+    /// Trail length — how long things linger before fading (meltdown, matrix).
     Persistence,
-    /// How much the effect displaces the *real* UI (drag distance, roll). The
-    /// "makes it hard to read" knob — turn it down for a calmer look.
+    /// How much the effect displaces the *real* UI (glitch family).
     Disruption,
+    /// Strobe / flashing-band amount (rave).
+    Strobe,
+    /// Toggle: particles chase the mouse pointer (sakura).
+    FollowMouse,
 }
 
 impl Knob {
     pub fn label(self) -> &'static str {
         match self {
             Knob::Intensity => "intensity",
+            Knob::Speed => "speed",
+            Knob::Density => "density",
+            Knob::BeatSync => "beat sync",
+            Knob::Wind => "wind",
             Knob::Persistence => "persistence",
             Knob::Disruption => "disruption",
+            Knob::Strobe => "strobe",
+            Knob::FollowMouse => "follow mouse",
+        }
+    }
+
+    pub fn kind(self) -> KnobKind {
+        match self {
+            Knob::FollowMouse => KnobKind::Toggle,
+            _ => KnobKind::Range,
         }
     }
 }
 
 /// A configurable theme's live knob values. Non-configurable themes ignore it.
+/// Every field is 0..1 (toggles use 0.0/1.0). `Default` is a neutral baseline;
+/// each theme overrides only the fields it exposes via `default_tuning`.
 #[derive(Clone, Copy)]
 pub struct Tuning {
     pub intensity: f32,
+    pub speed: f32,
+    pub density: f32,
+    pub beat_sync: f32,
+    pub wind: f32,
     pub persistence: f32,
     pub disruption: f32,
+    pub strobe: f32,
+    pub follow_mouse: f32,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            intensity: 0.6,
+            speed: 0.5,
+            density: 0.5,
+            beat_sync: 0.5,
+            wind: 0.3,
+            persistence: 0.3,
+            disruption: 0.5,
+            strobe: 0.5,
+            follow_mouse: 1.0,
+        }
+    }
 }
 
 impl Tuning {
     pub fn get(self, k: Knob) -> f32 {
         match k {
             Knob::Intensity => self.intensity,
+            Knob::Speed => self.speed,
+            Knob::Density => self.density,
+            Knob::BeatSync => self.beat_sync,
+            Knob::Wind => self.wind,
             Knob::Persistence => self.persistence,
             Knob::Disruption => self.disruption,
+            Knob::Strobe => self.strobe,
+            Knob::FollowMouse => self.follow_mouse,
         }
     }
 
     pub fn set(&mut self, k: Knob, v: f32) {
-        let v = v.clamp(0.0, 1.0);
+        // Snap toggles to 0/1 so stored values stay clean.
+        let v = if k.kind() == KnobKind::Toggle {
+            if v >= 0.5 { 1.0 } else { 0.0 }
+        } else {
+            v.clamp(0.0, 1.0)
+        };
         match k {
             Knob::Intensity => self.intensity = v,
+            Knob::Speed => self.speed = v,
+            Knob::Density => self.density = v,
+            Knob::BeatSync => self.beat_sync = v,
+            Knob::Wind => self.wind = v,
             Knob::Persistence => self.persistence = v,
             Knob::Disruption => self.disruption = v,
+            Knob::Strobe => self.strobe = v,
+            Knob::FollowMouse => self.follow_mouse = v,
         }
+    }
+
+    /// Convenience for `Toggle` knobs (used by Phase 2 themes).
+    #[allow(dead_code)]
+    pub fn is_on(self, k: Knob) -> bool {
+        self.get(k) >= 0.5
     }
 }
 
@@ -123,11 +206,7 @@ pub trait ThemeEffect: Sync {
     /// Starting knob values, used until the user overrides them. Only meaningful
     /// for themes that expose `knobs`.
     fn default_tuning(&self) -> Tuning {
-        Tuning {
-            intensity: 0.7,
-            persistence: 0.5,
-            disruption: 0.6,
-        }
+        Tuning::default()
     }
 
     /// Border accent for a panel: the theme's static `base`, or an animated

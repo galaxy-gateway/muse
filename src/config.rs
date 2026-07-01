@@ -434,8 +434,14 @@ pub struct Settings {
 #[derive(Serialize, Deserialize, Clone, Copy, Default)]
 pub struct TuningCfg {
     pub intensity: Option<f32>,
+    pub speed: Option<f32>,
+    pub density: Option<f32>,
+    pub beat_sync: Option<f32>,
+    pub wind: Option<f32>,
     pub persistence: Option<f32>,
     pub disruption: Option<f32>,
+    pub strobe: Option<f32>,
+    pub follow_mouse: Option<f32>,
 }
 
 impl TuningCfg {
@@ -444,11 +450,29 @@ impl TuningCfg {
         if let Some(v) = self.intensity {
             t.intensity = v;
         }
+        if let Some(v) = self.speed {
+            t.speed = v;
+        }
+        if let Some(v) = self.density {
+            t.density = v;
+        }
+        if let Some(v) = self.beat_sync {
+            t.beat_sync = v;
+        }
+        if let Some(v) = self.wind {
+            t.wind = v;
+        }
         if let Some(v) = self.persistence {
             t.persistence = v;
         }
         if let Some(v) = self.disruption {
             t.disruption = v;
+        }
+        if let Some(v) = self.strobe {
+            t.strobe = v;
+        }
+        if let Some(v) = self.follow_mouse {
+            t.follow_mouse = v;
         }
     }
 
@@ -456,8 +480,14 @@ impl TuningCfg {
     pub fn from(t: &Tuning) -> Self {
         Self {
             intensity: Some(t.intensity),
+            speed: Some(t.speed),
+            density: Some(t.density),
+            beat_sync: Some(t.beat_sync),
+            wind: Some(t.wind),
             persistence: Some(t.persistence),
             disruption: Some(t.disruption),
+            strobe: Some(t.strobe),
+            follow_mouse: Some(t.follow_mouse),
         }
     }
 }

@@ -37,8 +37,8 @@ impl ThemeEffect for Datamosh {
     fn default_tuning(&self) -> Tuning {
         Tuning {
             intensity: 0.7,
-            persistence: 0.0,
             disruption: 0.55,
+            ..Default::default()
         }
     }
 
