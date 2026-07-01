@@ -80,9 +80,11 @@ impl App {
         // since auto-advance may reach a track the cursor never selected.
         self.ensure_meta(&path);
         self.push_media_metadata();
-        // The now-playing waveform is filled progressively from the decode stream
-        // on each tick (`sync_stream_waveform`), or computed on demand there when
-        // the track is a fully-decoded gapless one. Nothing to request here.
+        // Kick the cheap up-front waveform (packet-size envelope). Until it lands,
+        // `sync_stream_waveform` shows the progressive decode fill as a stopgap.
+        if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
+            self.request_waveform(path.clone());
+        }
         self.request_art(path);
         // Maintain the shuffle bag (drop the now-playing track, refill if dry).
         self.shuffle_after_play();

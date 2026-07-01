@@ -618,7 +618,11 @@ impl App {
         let Some(np) = self.now_playing.clone() else {
             return;
         };
-        if let Some(bins) = self.engine.stream_bins() {
+        // Prefer the up-front envelope once it's cached — only use the progressive
+        // stream fill as a stopgap before it arrives.
+        if self.wave_cache.contains_key(&np) {
+            // Already have a (full) waveform — leave it.
+        } else if let Some(bins) = self.engine.stream_bins() {
             // Streaming track with real peaks: fill the waveform in live.
             self.wave_cache.insert(np.clone(), bins);
             touch_lru(&mut self.wave_order, &np);

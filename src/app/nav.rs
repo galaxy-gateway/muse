@@ -179,7 +179,11 @@ impl App {
         self.wave_pending = Some(path.clone());
         let tx = self.tx.clone();
         thread::spawn(move || {
-            if let Ok(bins) = crate::audio::waveform_bins(&path, WAVE_BINS) {
+            // Cheap packet-size envelope first (no decode, near-instant); fall
+            // back to a full decode-scan only for CBR files where it's useless.
+            let bins = crate::audio::waveform_envelope(&path, WAVE_BINS)
+                .or_else(|| crate::audio::waveform_bins(&path, WAVE_BINS).ok());
+            if let Some(bins) = bins {
                 let _ = tx.send(AppEvent::Wave(path, token, bins));
             }
         });
