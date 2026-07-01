@@ -8,8 +8,8 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -48,6 +48,340 @@ impl DecodedAudio {
     pub fn frames(&self) -> usize {
         self.samples.len() / 2
     }
+}
+
+/// A track that is decoded *incrementally* into a growing shared buffer. The
+/// decode thread plays whatever is `ready` and never waits for the whole file,
+/// so even a 70-minute podcast starts in a few ms and keeps going while the rest
+/// streams in behind the playhead. A fully-decoded (e.g. gapless-preloaded) track
+/// is just a `StreamBuf` created `done` with everything ready.
+struct StreamBuf {
+    /// Device-rate interleaved-stereo samples; grows as decoding progresses.
+    samples: Mutex<Vec<f32>>,
+    /// Frames published as safe to read (`samples.len()/2` at last append).
+    ready: AtomicUsize,
+    /// Absolute device frame that this buffer's local frame 0 corresponds to.
+    /// Non-zero when the stream was (re)started from a seek into the track.
+    base: AtomicU64,
+    /// Decoding finished (EOF or error) — no more frames will be appended.
+    done: AtomicBool,
+    /// Estimated total device frames from the container, or 0 if unknown.
+    total: AtomicU64,
+    /// Set to stop the background decoder early when the track is superseded.
+    cancel: AtomicBool,
+}
+
+impl StreamBuf {
+    fn empty(base: u64) -> Arc<Self> {
+        Arc::new(Self {
+            samples: Mutex::new(Vec::new()),
+            ready: AtomicUsize::new(0),
+            base: AtomicU64::new(base),
+            done: AtomicBool::new(false),
+            total: AtomicU64::new(0),
+            cancel: AtomicBool::new(false),
+        })
+    }
+
+    /// Wrap an already-fully-decoded buffer (gapless preload) as a done stream.
+    fn from_full(d: DecodedAudio) -> Arc<Self> {
+        let frames = d.frames() as u64;
+        Arc::new(Self {
+            samples: Mutex::new(d.samples),
+            ready: AtomicUsize::new(frames as usize),
+            base: AtomicU64::new(0),
+            done: AtomicBool::new(true),
+            total: AtomicU64::new(frames),
+            cancel: AtomicBool::new(false),
+        })
+    }
+
+    fn append(&self, chunk: &[f32]) {
+        if chunk.is_empty() {
+            return;
+        }
+        let mut s = self.samples.lock().unwrap();
+        s.extend_from_slice(chunk);
+        self.ready.store(s.len() / 2, Ordering::Release);
+    }
+}
+
+/// Number of peak bins in the live waveform, filled progressively as a track
+/// decodes. Matches the UI's request resolution.
+const WAVE_BINS: usize = 1600;
+
+/// Shared, progressively-filled waveform: min/max peak per absolute bin across
+/// the whole track. The streaming decoder folds each decoded chunk into it (at
+/// absolute positions, so it survives seeks); the UI reads a snapshot each frame.
+struct WaveShared {
+    bins: Mutex<Vec<(f32, f32)>>,
+    total: AtomicU64, // total device frames (bin width = total / bins.len())
+    /// Set once any real peak has been folded in — until then the UI keeps its
+    /// existing waveform instead of showing empty bins.
+    active: AtomicBool,
+}
+
+impl WaveShared {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            bins: Mutex::new(vec![(0.0, 0.0); WAVE_BINS]),
+            total: AtomicU64::new(0),
+            active: AtomicBool::new(false),
+        })
+    }
+
+    /// Fold a device-rate chunk starting at absolute frame `abs0` into the bins.
+    fn add(&self, chunk: &[f32], abs0: u64) {
+        let total = self.total.load(Ordering::Relaxed);
+        if total == 0 || chunk.is_empty() {
+            return;
+        }
+        self.active.store(true, Ordering::Relaxed);
+        let n = WAVE_BINS as u64;
+        let mut bins = self.bins.lock().unwrap();
+        for (i, s) in chunk.chunks_exact(2).enumerate() {
+            let abs = abs0 + i as u64;
+            let bi = ((abs * n) / total).min(n - 1) as usize;
+            let m = 0.5 * (s[0] + s[1]);
+            let b = &mut bins[bi];
+            if m < b.0 {
+                b.0 = m;
+            }
+            if m > b.1 {
+                b.1 = m;
+            }
+        }
+    }
+}
+
+/// Stateful streaming linear resampler for interleaved stereo. Cheap and, unlike
+/// resampling each chunk independently, click-free across chunk boundaries
+/// because the fractional phase + previous frame carry over. `step == 1` (rate
+/// match) is exact passthrough. Slightly softer than the offline windowed-sinc
+/// used for full decodes, but the right tradeoff for instant, gap-free streaming.
+struct StreamResampler {
+    step: f64, // native frames advanced per output frame
+    phase: f64,
+    prev: [f32; 2],
+    have_prev: bool,
+}
+
+impl StreamResampler {
+    fn new(native_sr: u32, device_sr: u32) -> Self {
+        Self {
+            step: native_sr as f64 / device_sr as f64,
+            phase: 0.0,
+            prev: [0.0; 2],
+            have_prev: false,
+        }
+    }
+
+    /// Feed one native interleaved-stereo chunk; append device-rate output.
+    fn feed(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        for f in 0..input.len() / 2 {
+            let cur = [input[f * 2], input[f * 2 + 1]];
+            if !self.have_prev {
+                self.prev = cur;
+                self.have_prev = true;
+                continue;
+            }
+            while self.phase < 1.0 {
+                let p = self.phase as f32;
+                out.push(self.prev[0] + (cur[0] - self.prev[0]) * p);
+                out.push(self.prev[1] + (cur[1] - self.prev[1]) * p);
+                self.phase += self.step;
+            }
+            self.phase -= 1.0;
+            self.prev = cur;
+        }
+    }
+}
+
+/// Background entry: decode `path` into `sb` incrementally, filling `wave` with
+/// peaks, starting at `seek_frames` (device frames; 0 = from the top). Streams via
+/// symphonia when possible; if that can't even start (unsupported / needs ffmpeg),
+/// falls back to a one-shot full decode from the top. Always marks `done`.
+fn stream_decode(
+    path: &Path,
+    device_sr: u32,
+    sb: Arc<StreamBuf>,
+    wave: Arc<WaveShared>,
+    seek_frames: u64,
+) {
+    // Stream via symphonia (disk file or archive bytes). Only fall back to a full
+    // decode when streaming can't even start (e.g. a format that needs ffmpeg).
+    let streamed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        stream_symphonia(path, device_sr, &sb, &wave, seek_frames)
+    }))
+    .unwrap_or_else(|_| Err(anyhow!("decoder panicked")));
+    // Full-decode fallback only for the initial play (not a seek). The fallback
+    // is a single blocking, *uncancellable* decode of the whole file — running it
+    // per seek on a large track (and it can't honor the seek anyway) is how rapid
+    // waveform-clicking piled up into an out-of-memory crash.
+    if streamed.is_err() && seek_frames == 0 && sb.ready.load(Ordering::Relaxed) == 0 {
+        // Retry once: a decode can fail transiently, and a track that decodes to
+        // nothing would otherwise just fail to play.
+        for attempt in 0..2 {
+            if sb.cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            match load_track_safe(path, device_sr) {
+                Ok(d) if !sb.cancel.load(Ordering::Relaxed) => {
+                    // Fallback can't honor a mid-file seek — it decodes from the top.
+                    let total = d.frames() as u64;
+                    sb.base.store(0, Ordering::Relaxed);
+                    sb.total.store(total, Ordering::Relaxed);
+                    wave.total.store(total, Ordering::Relaxed);
+                    wave.add(&d.samples, 0);
+                    sb.append(&d.samples);
+                    break;
+                }
+                _ => {
+                    if attempt == 0 {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
+            }
+        }
+    }
+    sb.done.store(true, Ordering::Release);
+}
+
+/// Stream-decode a symphonia-readable file into `sb` (optionally seeked to
+/// `seek_frames`): decode packet-by-packet, fold to stereo, resample to the
+/// device rate, append, and fold peaks into `wave` at absolute positions.
+fn stream_symphonia(
+    path: &Path,
+    device_sr: u32,
+    sb: &StreamBuf,
+    wave: &WaveShared,
+    seek_frames: u64,
+) -> Result<()> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymErr;
+    use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use symphonia::core::units::Time;
+
+    // Stream from disk, or from an archive entry's in-memory bytes (also seekable
+    // via `MemSource`) — so zipped songs start immediately too, no full-decode
+    // wait up front.
+    let mut hint = Hint::new();
+    let mss = if let Some((arc, inner)) = crate::archive::split_virtual(path) {
+        let bytes = crate::archive::read(&arc, &inner)
+            .ok_or_else(|| anyhow!("archive entry unreadable: {inner}"))?;
+        if let Some(ext) = Path::new(&inner).extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        MediaSourceStream::new(Box::new(MemSource::new(bytes)), Default::default())
+    } else {
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let file = File::open(path)?;
+        MediaSourceStream::new(Box::new(file), Default::default())
+    };
+    let fmt_opts = FormatOptions {
+        enable_gapless: true,
+        ..Default::default()
+    };
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &fmt_opts,
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| anyhow!("no default track"))?
+        .clone();
+    let track_id = track.id;
+    let sr = track.codec_params.sample_rate.unwrap_or(44100);
+    // Publish the real total up-front (device frames) so the seek bar + waveform
+    // are correct from the first sound, even though only a prefix is decoded.
+    let total = track
+        .codec_params
+        .n_frames
+        .map(|n| (n as f64 * device_sr as f64 / sr as f64) as u64)
+        .unwrap_or(0);
+    sb.total.store(total, Ordering::Release);
+    wave.total.store(total, Ordering::Relaxed);
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+
+    // Seek into the file if requested, then reset the decoder's state. `base` is
+    // pinned to where the reader actually landed so positions stay accurate.
+    if seek_frames > 0 {
+        let secs = seek_frames as f64 / device_sr as f64;
+        let time = Time::new(secs.trunc() as u64, secs.fract());
+        if let Ok(seeked) = format.seek(
+            SeekMode::Coarse,
+            SeekTo::Time {
+                time,
+                track_id: Some(track_id),
+            },
+        ) {
+            let base = (seeked.actual_ts as f64 * device_sr as f64 / sr as f64) as u64;
+            sb.base.store(base, Ordering::Relaxed);
+        }
+        decoder.reset();
+    }
+
+    let mut resamp = StreamResampler::new(sr, device_sr);
+    let mut native: Vec<f32> = Vec::new();
+    let mut out: Vec<f32> = Vec::new();
+    let mut sbuf: Option<SampleBuffer<f32>> = None;
+    loop {
+        if sb.cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let trim_start = packet.trim_start as usize;
+        let trim_end = packet.trim_end as usize;
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let ch = decoded.spec().channels.count().max(1);
+                if sbuf.is_none() {
+                    let spec = *decoded.spec();
+                    sbuf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+                }
+                let sbf = sbuf.as_mut().unwrap();
+                sbf.copy_interleaved_ref(decoded);
+                let samples = sbf.samples();
+                let frames = samples.len() / ch;
+                let start = trim_start.min(frames);
+                let end = frames.saturating_sub(trim_end).max(start);
+                native.clear();
+                for f in start..end {
+                    let base = f * ch;
+                    let l = samples[base];
+                    let r = if ch >= 2 { samples[base + 1] } else { l };
+                    native.push(l);
+                    native.push(r);
+                }
+                out.clear();
+                resamp.feed(&native, &mut out);
+                // Fold peaks at absolute positions before publishing the frames.
+                let abs0 =
+                    sb.base.load(Ordering::Relaxed) + sb.ready.load(Ordering::Relaxed) as u64;
+                wave.add(&out, abs0);
+                sb.append(&out);
+            }
+            Err(SymErr::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    Ok(())
 }
 
 /// A seekable, in-memory `MediaSource` over archive-entry bytes, so symphonia
@@ -115,6 +449,12 @@ pub struct AudioEngine {
     /// Path of each track the decode thread spliced into at a gapless boundary,
     /// so the UI can sync `now_playing` without re-issuing `Open`.
     advance_rx: Receiver<PathBuf>,
+    /// The current streaming track's progressively-filled waveform, or `None`
+    /// (fully-decoded / gapless track — the UI computes its own then).
+    current_bins: Arc<Mutex<Option<Arc<WaveShared>>>>,
+    /// True while a track is playing but no audio has decoded yet (the UI shows a
+    /// loading spinner). Cleared as soon as the first frames are ready.
+    buffering: Arc<AtomicBool>,
     scope_out: triple_buffer::Output<Vec<f32>>,
     device_sr: u32,
     pos_frames: Arc<AtomicU64>,
@@ -226,49 +566,25 @@ impl AudioEngine {
             }
         });
 
-        // --- background full-decoder thread ---------------------------------
-        // When an Open starts on a fast prefix (instant playback), the decode
-        // thread asks here for the complete track; the finished buffer is swapped
-        // in seamlessly once ready. Separate from the preloader so a click never
-        // fights the gapless next-track prefetch for the loader.
-        let (full_req_tx, full_req_rx) = unbounded::<PathBuf>();
-        let (full_done_tx, full_done_rx) = unbounded::<(PathBuf, DecodedAudio)>();
-        thread::spawn(move || {
-            while let Ok(mut path) = full_req_rx.recv() {
-                while let Ok(p) = full_req_rx.try_recv() {
-                    path = p;
-                }
-                if let Ok(dec) = load_track_safe(&path, device_sr) {
-                    let _ = full_done_tx.send((path, dec));
-                }
-            }
-        });
-
         // --- decode thread --------------------------------------------------
         // The decode thread advances into a preloaded track on its own at a
         // sample-accurate boundary (no UI round-trip) and announces the switch
         // on `advance_tx`; the UI drains `advance_rx` to update now-playing.
         let (advance_tx, advance_rx) = unbounded::<PathBuf>();
         let (cmd_tx, cmd_rx) = bounded::<TransportCmd>(64);
+        let current_bins: Arc<Mutex<Option<Arc<WaveShared>>>> = Arc::new(Mutex::new(None));
+        let buffering = Arc::new(AtomicBool::new(false));
         {
             let playing = playing.clone();
             let volume = volume.clone();
             let pos_frames = pos_frames.clone();
             let dur_frames = dur_frames.clone();
+            let bins_slot = current_bins.clone();
+            let buffering = buffering.clone();
             thread::spawn(move || {
                 decode_loop(
-                    cmd_rx,
-                    loaded_rx,
-                    full_req_tx,
-                    full_done_rx,
-                    advance_tx,
-                    producer,
-                    device_sr,
-                    playing,
-                    volume,
-                    pos_frames,
-                    dur_frames,
-                    flush_gen,
+                    cmd_rx, loaded_rx, advance_tx, bins_slot, buffering, producer, device_sr,
+                    playing, volume, pos_frames, dur_frames, flush_gen,
                 );
             });
         }
@@ -277,6 +593,8 @@ impl AudioEngine {
             cmd_tx,
             load_tx,
             advance_rx,
+            current_bins,
+            buffering,
             scope_out,
             device_sr,
             pos_frames,
@@ -285,6 +603,28 @@ impl AudioEngine {
             volume,
             _stream: stream,
         })
+    }
+
+    /// True while a track is playing but no audio has decoded yet — drives the
+    /// loading spinner. Cleared the moment the first frames are ready.
+    pub fn is_buffering(&self) -> bool {
+        self.buffering.load(Ordering::Relaxed)
+    }
+
+    /// Snapshot of the current streaming track's progressively-filled waveform
+    /// peaks — `None` until at least one peak has been decoded (so the UI doesn't
+    /// flash empty bins) and for fully-decoded / gapless tracks.
+    pub fn stream_bins(&self) -> Option<Vec<(f32, f32)>> {
+        let g = self.current_bins.lock().unwrap();
+        g.as_ref()
+            .filter(|w| w.active.load(Ordering::Relaxed))
+            .map(|w| w.bins.lock().unwrap().clone())
+    }
+
+    /// Whether the current track is being streamed (has a live waveform coming),
+    /// even if no peaks have landed yet — so the UI waits instead of recomputing.
+    pub fn has_stream(&self) -> bool {
+        self.current_bins.lock().unwrap().is_some()
     }
 
     pub fn send(&self, cmd: TransportCmd) {
@@ -330,14 +670,59 @@ impl AudioEngine {
     }
 }
 
-/// Decode-thread main loop: owns the current track in memory and feeds the ring.
+/// Seek the current track to absolute device frame `target`. If it's already
+/// decoded, just move the cursor; otherwise restart the background decoder seeked
+/// to that point (the growing waveform keeps accumulating across the restart).
+#[allow(clippy::too_many_arguments)]
+fn seek_to(
+    audio: &mut Option<Arc<StreamBuf>>,
+    cursor: &mut usize,
+    current_path: &Option<PathBuf>,
+    wave: &Option<Arc<WaveShared>>,
+    device_sr: u32,
+    target: u64,
+    pos_frames: &Arc<AtomicU64>,
+) {
+    let Some(sb) = audio.as_ref() else { return };
+    let total = sb.total.load(Ordering::Relaxed);
+    let target = if total > 0 {
+        target.min(total.saturating_sub(1))
+    } else {
+        target
+    };
+    let base = sb.base.load(Ordering::Relaxed);
+    let ready = sb.ready.load(Ordering::Acquire) as u64;
+    if target >= base && target <= base + ready {
+        *cursor = (target - base) as usize; // already decoded — just move
+        pos_frames.store(target, Ordering::Relaxed);
+        return;
+    }
+    // Undecoded: restart the decoder seeked to `target`. Only live streams reach
+    // here (a fully-decoded buffer covers its whole range above).
+    if let (Some(path), Some(w)) = (current_path, wave) {
+        sb.cancel.store(true, Ordering::Relaxed);
+        let nsb = StreamBuf::empty(target);
+        nsb.total.store(total, Ordering::Relaxed);
+        *cursor = 0;
+        pos_frames.store(target, Ordering::Relaxed);
+        let (p, w2, nsb2) = (path.clone(), w.clone(), nsb.clone());
+        *audio = Some(nsb);
+        thread::spawn(move || stream_decode(&p, device_sr, nsb2, w2, target));
+    } else {
+        *cursor = target.saturating_sub(base).min(ready) as usize;
+        pos_frames.store(base + *cursor as u64, Ordering::Relaxed);
+    }
+}
+
+/// Decode-thread main loop: owns the current track's growing `StreamBuf` and
+/// feeds the ring from whatever has decoded so far.
 #[allow(clippy::too_many_arguments)]
 fn decode_loop(
     cmd_rx: Receiver<TransportCmd>,
     loaded_rx: Receiver<(PathBuf, DecodedAudio)>,
-    full_req_tx: Sender<PathBuf>,
-    full_done_rx: Receiver<(PathBuf, DecodedAudio)>,
     advance_tx: Sender<PathBuf>,
+    bins_slot: Arc<Mutex<Option<Arc<WaveShared>>>>,
+    buffering: Arc<AtomicBool>,
     mut producer: rtrb::Producer<f32>,
     device_sr: u32,
     playing: Arc<AtomicBool>,
@@ -346,35 +731,24 @@ fn decode_loop(
     dur_frames: Arc<AtomicU64>,
     flush_gen: Arc<AtomicU64>,
 ) {
-    let mut audio: Option<DecodedAudio> = None;
-    let mut cursor: usize = 0; // frame index into the current track
+    let mut audio: Option<Arc<StreamBuf>> = None;
+    let mut cursor: usize = 0; // frame index into the current buffer (from `base`)
+    // The progressively-filled waveform + source path of the current stream, kept
+    // for waveform publishing and seek-into-undecoded restarts.
+    let mut wave: Option<Arc<WaveShared>> = None;
+    let mut current_path: Option<PathBuf> = None;
     // Track decoded ahead of time by the loader thread, ready for an instant,
     // gapless switch when its path is Open-ed.
     let mut preloaded: Option<(PathBuf, DecodedAudio)> = None;
-    // Progressive decode: while `partial` is set, `audio` holds only the opening
-    // prefix and `current_path`'s full buffer is decoding in the background. When
-    // it arrives it replaces `audio` in place (cursor preserved) — seamless,
-    // because the same deterministic resampler yields identical early frames.
-    let mut current_path: Option<PathBuf> = None;
-    let mut partial = false;
 
     loop {
         // Pick up any finished preload (keep only the most recent).
         while let Ok(item) = loaded_rx.try_recv() {
             preloaded = Some(item);
         }
-        // Swap the completed full track in over its prefix (same path only).
-        while let Ok((path, dec)) = full_done_rx.try_recv() {
-            if partial && current_path.as_ref() == Some(&path) {
-                dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
-                audio = Some(dec);
-                partial = false;
-            }
-        }
         // Drain all pending commands into a batch. Coalescing here is what keeps
-        // rapid song-switching responsive: only the LAST Open is actually decoded
-        // (the expensive part), so a burst of switches never backs up the bounded
-        // command channel and blocks the UI thread — earlier Opens are dropped.
+        // rapid song-switching responsive: only the LAST Open actually spawns a
+        // decoder, so a burst of switches never backs up the command channel.
         let mut cmds = Vec::new();
         while let Ok(cmd) = cmd_rx.try_recv() {
             cmds.push(cmd);
@@ -383,6 +757,11 @@ fn decode_loop(
         let last_open = cmds
             .iter()
             .rposition(|c| matches!(c, TransportCmd::Open(_)));
+        // Coalesce absolute seeks: rapid waveform clicks would otherwise each
+        // spawn a fresh decoder (and pile up memory) — only the last one matters.
+        let last_seek = cmds
+            .iter()
+            .rposition(|c| matches!(c, TransportCmd::SeekTo(_)));
         for (i, cmd) in cmds.into_iter().enumerate() {
             match cmd {
                 TransportCmd::Open(path) => {
@@ -390,13 +769,12 @@ fn decode_loop(
                     if Some(i) != last_open {
                         continue;
                     }
-                    // Reset transport up-front so a failed decode leaves a clean
-                    // stopped state (dur = 0) rather than stale values, which
-                    // would otherwise make the UI's end-of-track detector fire
-                    // every tick and storm-advance through the list.
-                    audio = None;
+                    // Cancel the previous stream's background decoder so a long
+                    // podcast doesn't keep decoding after we've moved on.
+                    if let Some(old) = &audio {
+                        old.cancel.store(true, Ordering::Relaxed);
+                    }
                     cursor = 0;
-                    partial = false;
                     current_path = Some(path.clone());
                     pos_frames.store(0, Ordering::Relaxed);
                     dur_frames.store(0, Ordering::Relaxed);
@@ -405,37 +783,26 @@ fn decode_loop(
                     // immediate (no stale audio plays out first).
                     flush_gen.fetch_add(1, Ordering::Relaxed);
                     match preloaded.take() {
-                        // Prefetched (gapless): full buffer already in hand.
+                        // Prefetched (gapless): full buffer already in hand. No
+                        // live waveform — the UI falls back to its own compute.
                         Some((p, d)) if p == path => {
-                            dur_frames.store(d.frames() as u64, Ordering::Relaxed);
-                            audio = Some(d);
+                            let sb = StreamBuf::from_full(d);
+                            dur_frames.store(sb.total.load(Ordering::Relaxed), Ordering::Relaxed);
+                            audio = Some(sb);
+                            wave = None;
+                            *bins_slot.lock().unwrap() = None;
                             playing.store(true, Ordering::Relaxed);
                         }
                         _ => {
-                            // Not prefetched: start on a fast prefix and pull the
-                            // full track in the background for a seamless swap.
-                            match load_prefix_safe(&path, device_sr) {
-                                Ok((prefix, total)) => {
-                                    dur_frames.store(
-                                        total.unwrap_or(prefix.frames() as u64),
-                                        Ordering::Relaxed,
-                                    );
-                                    audio = Some(prefix);
-                                    partial = true;
-                                    playing.store(true, Ordering::Relaxed);
-                                    let _ = full_req_tx.send(path.clone());
-                                }
-                                // Prefix failed (e.g. ffmpeg-only path already
-                                // returns the whole file): fall back to a full
-                                // synchronous decode.
-                                Err(_) => {
-                                    if let Ok(d) = load_track_safe(&path, device_sr) {
-                                        dur_frames.store(d.frames() as u64, Ordering::Relaxed);
-                                        audio = Some(d);
-                                        playing.store(true, Ordering::Relaxed);
-                                    }
-                                }
-                            }
+                            // Stream it: play as it decodes, never waiting for the
+                            // whole file. The waveform fills in from the same decode.
+                            let sb = StreamBuf::empty(0);
+                            let w = WaveShared::new();
+                            audio = Some(sb.clone());
+                            wave = Some(w.clone());
+                            *bins_slot.lock().unwrap() = Some(w.clone());
+                            playing.store(true, Ordering::Relaxed);
+                            thread::spawn(move || stream_decode(&path, device_sr, sb, w, 0));
                         }
                     }
                 }
@@ -446,18 +813,35 @@ fn decode_loop(
                 TransportCmd::Pause => playing.store(false, Ordering::Relaxed),
                 TransportCmd::Play => playing.store(true, Ordering::Relaxed),
                 TransportCmd::SeekRel(secs) => {
-                    if let Some(a) = &audio {
-                        let delta = (secs * device_sr as f64) as i64;
-                        let nc = (cursor as i64 + delta).clamp(0, a.frames() as i64);
-                        cursor = nc as usize;
-                        pos_frames.store(cursor as u64, Ordering::Relaxed);
+                    if let Some(sb) = &audio {
+                        let here = sb.base.load(Ordering::Relaxed) + cursor as u64;
+                        let target = (here as f64 + secs * device_sr as f64).max(0.0) as u64;
+                        seek_to(
+                            &mut audio,
+                            &mut cursor,
+                            &current_path,
+                            &wave,
+                            device_sr,
+                            target,
+                            &pos_frames,
+                        );
                     }
                 }
                 TransportCmd::SeekTo(secs) => {
-                    if let Some(a) = &audio {
-                        let nc = (secs * device_sr as f64).clamp(0.0, a.frames() as f64);
-                        cursor = nc as usize;
-                        pos_frames.store(cursor as u64, Ordering::Relaxed);
+                    if Some(i) != last_seek {
+                        continue; // superseded by a later click in this batch
+                    }
+                    if audio.is_some() {
+                        let target = (secs * device_sr as f64).max(0.0) as u64;
+                        seek_to(
+                            &mut audio,
+                            &mut cursor,
+                            &current_path,
+                            &wave,
+                            device_sr,
+                            target,
+                            &pos_frames,
+                        );
                     }
                 }
                 TransportCmd::VolRel(d) => {
@@ -471,18 +855,39 @@ fn decode_loop(
         }
 
         let active = playing.load(Ordering::Relaxed);
+        // Buffering = trying to play but nothing decoded yet (drives the spinner).
+        buffering.store(
+            active
+                && audio
+                    .as_ref()
+                    .is_some_and(|sb| sb.ready.load(Ordering::Acquire) == 0),
+            Ordering::Relaxed,
+        );
         if active && audio.is_some() {
+            let sb = audio.as_ref().unwrap().clone();
+            let ready = sb.ready.load(Ordering::Acquire);
+            // Duration: the container total once known, else the decoded-so-far
+            // count (grows) for streams without a length.
+            let total_est = sb.total.load(Ordering::Relaxed);
+            dur_frames.store(
+                if total_est > 0 {
+                    total_est
+                } else {
+                    ready as u64
+                },
+                Ordering::Relaxed,
+            );
             let mut pushed = false;
-            // Push until the ring is full or the track ends.
-            let total = {
-                let a = audio.as_ref().unwrap();
-                let total = a.frames();
-                while cursor < total {
+            {
+                // Lock once and push a batch. This is the decode thread, not the
+                // realtime cpal callback, so a short lock here is fine.
+                let samples = sb.samples.lock().unwrap();
+                while cursor < ready {
                     if producer.slots() < 2 {
                         break;
                     }
-                    let l = a.samples[cursor * 2];
-                    let r = a.samples[cursor * 2 + 1];
+                    let l = samples[cursor * 2];
+                    let r = samples[cursor * 2 + 1];
                     if producer.push(l).is_err() {
                         break;
                     }
@@ -490,32 +895,39 @@ fn decode_loop(
                     cursor += 1;
                     pushed = true;
                 }
-                total
-            };
-            if pushed {
-                pos_frames.store(cursor as u64, Ordering::Relaxed);
             }
-            // Reaching the prefix end before the full track has swapped in is not
-            // the real end — hold (the ring briefly drains) until the full buffer
-            // arrives. With a 2s prefix vs sub-second decode this is never hit in
-            // practice, but it prevents a premature advance on a slow decode.
-            if cursor >= total && !partial {
-                // End of track. If the next track was preloaded, splice straight
-                // into it: keep the ring fed across the seam (its ~250ms tail is
-                // still draining to the DAC) so the boundary is sample-accurate
-                // with no UI round-trip. Otherwise stop and let the UI's
-                // end-of-track detector handle advance / end-of-list.
-                match preloaded.take() {
-                    Some((path, dec)) => {
-                        dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
-                        audio = Some(dec);
-                        cursor = 0;
-                        partial = false;
-                        current_path = Some(path.clone());
-                        pos_frames.store(0, Ordering::Relaxed);
-                        let _ = advance_tx.send(path);
+            if pushed {
+                pos_frames.store(
+                    sb.base.load(Ordering::Relaxed) + cursor as u64,
+                    Ordering::Relaxed,
+                );
+            }
+            // Only end the track once we've played everything AND decoding is
+            // finished. If we've merely caught up to the live decode edge, hold
+            // (the ring drains a little) and let the decoder get ahead again.
+            //
+            // A buffer that finished with ZERO frames didn't end — it failed to
+            // load (e.g. a transient archive-read error). Do NOT auto-advance in
+            // that case (that would look like skipping forward on a `p`/`n`); just
+            // stop so the user can retry.
+            if cursor >= ready && sb.done.load(Ordering::Acquire) {
+                if ready == 0 {
+                    playing.store(false, Ordering::Relaxed);
+                } else {
+                    match preloaded.take() {
+                        Some((path, dec)) => {
+                            current_path = Some(path.clone());
+                            wave = None;
+                            *bins_slot.lock().unwrap() = None;
+                            let nsb = StreamBuf::from_full(dec);
+                            dur_frames.store(nsb.total.load(Ordering::Relaxed), Ordering::Relaxed);
+                            audio = Some(nsb);
+                            cursor = 0;
+                            pos_frames.store(0, Ordering::Relaxed);
+                            let _ = advance_tx.send(path);
+                        }
+                        None => playing.store(false, Ordering::Relaxed),
                     }
-                    None => playing.store(false, Ordering::Relaxed),
                 }
             }
             thread::sleep(Duration::from_millis(3));
@@ -552,26 +964,6 @@ fn to_device_rate(dec: DecodedAudio, device_sr: u32) -> DecodedAudio {
             samples: resample_stereo(&dec.samples, dec.sample_rate, device_sr),
         }
     }
-}
-
-/// Seconds of audio decoded synchronously for an instant start before the full
-/// track is swapped in. Large enough to cover the background full-decode wall
-/// time on any reasonable file, small enough to decode in a few ms.
-const PREFIX_SECS: f64 = 2.0;
-
-/// Decode just the opening `PREFIX_SECS` of `path` (panic-safe), plus the real
-/// total duration in device frames when known. Used to start playback instantly;
-/// `full_decode_safe` later supplies the rest.
-fn load_prefix_safe(path: &Path, device_sr: u32) -> Result<(DecodedAudio, Option<u64>)> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let (dec, total_native) = decode_any(path, Some(PREFIX_SECS))?;
-        let native_sr = dec.sample_rate;
-        let audio = to_device_rate(dec, device_sr);
-        let total_device =
-            total_native.map(|t| (t as f64 * device_sr as f64 / native_sr as f64) as u64);
-        Ok((audio, total_device))
-    }))
-    .unwrap_or_else(|_| Err(anyhow!("decoder panicked on {}", path.display())))
 }
 
 /// Decode `path` to interleaved stereo at its native rate, transparently

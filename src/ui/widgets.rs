@@ -34,6 +34,13 @@ pub(super) fn panel_hint<'a>(
     )
 }
 
+/// A braille spinner glyph for the given frame — marks a track that is loading /
+/// buffering (playing but not yet decoded).
+pub(super) fn spinner(frame: u64) -> char {
+    const S: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    S[(frame / 4) as usize % S.len()]
+}
+
 /// Border accent for a panel: delegates to the theme's effect, which returns the
 /// static `base` or an animated color. `offset` spreads animation across panels;
 /// `beat` (0..1) lets a theme pulse its borders to the music.

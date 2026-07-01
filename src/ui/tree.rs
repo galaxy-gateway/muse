@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Padding, Paragraph, Wrap};
 
-use super::widgets::{border, panel};
+use super::widgets::{border, panel, spinner};
 use crate::app::App;
 use crate::color::rgb_of;
 use crate::util::{fmt_size, fmt_time};
@@ -136,6 +136,17 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     color
                 };
+                // Spinner in place of the ♪ while the now-playing track is still
+                // buffering (playing but nothing decoded yet).
+                let buffering_row = playing && app.engine.is_buffering();
+                let icon_span = if buffering_row {
+                    Span::styled(
+                        format!("{} ", spinner(app.frame)),
+                        Style::default().fg(t.accent2),
+                    )
+                } else {
+                    Span::styled(icon, Style::default().fg(icon_color))
+                };
                 let mut style = Style::default().fg(color);
                 if playing {
                     style = style.add_modifier(Modifier::BOLD);
@@ -158,7 +169,7 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                     idx,
                     vec![
                         Span::raw(indent),
-                        Span::styled(icon, Style::default().fg(icon_color)),
+                        icon_span,
                         Span::styled(n.name.clone(), style),
                         Span::styled(meta, Style::default().fg(t.dim)),
                     ],

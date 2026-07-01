@@ -610,6 +610,28 @@ impl App {
         })
     }
 
+    /// Keep the now-playing waveform in sync with the decode. A streaming track
+    /// exposes progressively-filled peaks (`engine.stream_bins`) that we copy into
+    /// `wave_cache` so the waveform fills in live as it decodes; a fully-decoded
+    /// (gapless) track has no stream, so we fall back to computing it on demand.
+    fn sync_stream_waveform(&mut self) {
+        let Some(np) = self.now_playing.clone() else {
+            return;
+        };
+        if let Some(bins) = self.engine.stream_bins() {
+            // Streaming track with real peaks: fill the waveform in live.
+            self.wave_cache.insert(np.clone(), bins);
+            touch_lru(&mut self.wave_order, &np);
+            self.evict_wave();
+        } else if self.engine.has_stream() {
+            // Streaming but no peaks yet — keep whatever waveform is already shown
+            // (e.g. the browse-computed one); don't overwrite it with empties.
+        } else if !self.wave_cache.contains_key(&np) && self.wave_pending.as_ref() != Some(&np) {
+            // Fully-decoded / gapless track has no live stream — compute on demand.
+            self.request_waveform(np);
+        }
+    }
+
     pub(super) fn list_len(&self) -> usize {
         if self.filter_active() {
             self.filtered.len()
@@ -645,6 +667,7 @@ impl App {
                 }
                 self.check_track_end();
                 self.sync_media_playback();
+                self.sync_stream_waveform();
                 let ctx = self.frame_ctx();
                 let fx = self.theme.effect;
                 fx.ambient(&mut self.sim, &ctx);

@@ -112,10 +112,15 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
                         String::new(),
                     )
                 });
-            let state = if app.engine.is_playing() {
-                ("▶ playing", t.playing)
+            let state: (String, Color) = if app.engine.is_buffering() {
+                (
+                    format!("{} loading", super::widgets::spinner(app.frame)),
+                    t.dim,
+                )
+            } else if app.engine.is_playing() {
+                ("▶ playing".to_string(), t.playing)
             } else {
-                ("⏸ paused", t.dim)
+                ("⏸ paused".to_string(), t.dim)
             };
             // Line 1: state + clock. A live "pos / dur" ticks by default; but a
             // per-frame change on this row makes the adjacent graphics-protocol
