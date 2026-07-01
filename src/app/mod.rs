@@ -342,7 +342,10 @@ impl App {
         }
         if let Some(track) = &s.session_track {
             let path = PathBuf::from(track);
-            if path.exists() && self.registry.is_supported(&path) {
+            // Only restore a track that belongs to the directory muse was opened
+            // in. Otherwise a saved song from a previous session in another
+            // directory (still present elsewhere on disk) would wrongly reappear.
+            if self.path_under_root(&path) && path.exists() && self.registry.is_supported(&path) {
                 self.engine.send(TransportCmd::Open(path.clone()));
                 self.begin_now_playing(path);
                 if let Some(pos) = s.session_pos {
@@ -486,6 +489,17 @@ impl App {
 
     pub fn root_path(&self) -> PathBuf {
         self.tree.node(self.tree.root).path.clone()
+    }
+
+    /// Whether `p` lives inside the current root directory. Compares canonical
+    /// forms so a relative launch dir or symlinks still match; falls back to a
+    /// plain prefix check when either path can't be canonicalized.
+    fn path_under_root(&self, p: &Path) -> bool {
+        let root = self.root_path();
+        match (std::fs::canonicalize(&root), std::fs::canonicalize(p)) {
+            (Ok(r), Ok(pp)) => pp.starts_with(r),
+            _ => p.starts_with(&root),
+        }
     }
 
     /// The selected tree node — `None` while the fuzzy filter is active (the
