@@ -54,7 +54,8 @@ pub(super) fn draw_transport(f: &mut Frame, app: &App, area: Rect) {
         LoopMode::One => "↻¹",
     };
     let shuffle = if app.shuffle { "  ⤨shuffle" } else { "" };
-    let gapless = if app.gapless { "  ~gapless" } else { "" };
+    // Gapless is on by default, so only surface the noteworthy off state.
+    let gapless = if app.gapless { "" } else { "  ⊘gapless" };
     let queue = if app.queue.is_empty() {
         String::new()
     } else {

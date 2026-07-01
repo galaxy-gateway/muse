@@ -117,19 +117,23 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 ("⏸ paused", t.dim)
             };
-            // Line 1: state + total duration. Deliberately STATIC (no live
-            // position here) — a per-frame-changing clock on these rows makes the
-            // adjacent terminal-graphics cover thumbnail flicker on iTerm2. The
-            // live playhead lives in the transport bar and the waveform.
+            // Line 1: state + clock. A live "pos / dur" ticks by default; but a
+            // per-frame change on this row makes the adjacent graphics-protocol
+            // cover thumbnail flicker on iTerm2, so when that thumbnail is
+            // actually on screen we fall back to the static total duration.
+            let (pos, dur) = (app.engine.position_secs(), app.engine.duration_secs());
+            let cover_flickers = app.show_art && app.graphics_capable;
+            let clock = if cover_flickers {
+                fmt_time(dur)
+            } else {
+                format!("{} / {}", fmt_time(pos), fmt_time(dur))
+            };
             let time = Line::from(vec![
                 Span::styled(
                     format!("{}   ", state.0),
                     Style::default().fg(state.1).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    fmt_time(app.engine.duration_secs()),
-                    Style::default().fg(t.dim),
-                ),
+                Span::styled(clock, Style::default().fg(t.dim)),
             ]);
             // line 2: title — artist
             let mut titleline = vec![Span::styled(title, Style::default().fg(t.playing))];

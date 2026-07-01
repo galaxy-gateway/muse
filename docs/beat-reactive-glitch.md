@@ -4,6 +4,11 @@ The Glitch theme animates in time with whatever is playing. On silence it is
 near-still; louder passages fizz more, and every beat snaps in tears and flashes
 that decay over a few frames.
 
+> **See also:** every animated theme is now beat-reactive and configurable — see
+> [animated-theme-beat-plan.md](animated-theme-beat-plan.md) for the per-theme
+> beat behavior + knob list. The Glitch family (glitch / datamosh / meltdown)
+> documented below is the original implementation the rest built on.
+
 ## Signal path
 
 1. `src/beat.rs` — `BeatState` watches the raw scope window every ~60 Hz tick and

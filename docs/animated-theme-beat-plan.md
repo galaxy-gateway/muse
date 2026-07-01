@@ -106,9 +106,14 @@ Each: **beat** = how it reacts · **knobs** (defaults).
    Overlay/ambient themes read `ctx.tuning` + `ctx.beat`/`ctx.beat_bands`
    directly. `Tuning::set` snaps toggles to 0/1; `scale()` is only ever called
    with f ≤ 1 (channels would wrap past 255).
-3. **Phase 3 — polish:** defaults pass (tune each so `BeatSync` default feels
-   good, not seizure-y), update `docs/beat-reactive-glitch.md` cross-links, add
-   a help note.
+3. **Phase 3 — polish:** ✅ docs cross-linked, help note updated
+   (`tab (in picker) tune animated themes`). Defaults are reasonable starting
+   values but the *feel* pass (whether each theme's default `BeatSync` is too
+   hot / too subtle) needs eyes + ears on a real terminal — adjust the
+   `default_tuning()` numbers per theme as needed. Note: beat pulses stay above
+   threshold for a few frames, so burst-spawning themes fire a short swell per
+   beat (bounded by the 700-particle cap); if any read as too dense, gate their
+   spawn on a rising-edge onset instead of `beat > threshold`.
 
 Estimate: Phase 1 is the real work (shared plumbing + editor toggle). Phases 2/3
 are mechanical per-theme once the plumbing exists.

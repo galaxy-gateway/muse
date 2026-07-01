@@ -261,7 +261,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
             "  t                theme picker — {} (saved)",
             t.name
         )),
-        Line::from("  tab (in picker)  tune glitch themes — intensity / etc."),
+        Line::from("  tab (in picker)  tune animated themes — beat sync / density / ..."),
         Line::from("  /                fuzzy find (⏎ apply · esc reset)"),
         Line::from("  ? then q / esc   open / close this help"),
         Line::from("  q                quit"),
