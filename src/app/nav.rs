@@ -12,6 +12,38 @@ use crate::model::NodeId;
 const WAVE_BINS: usize = 1600;
 
 impl App {
+    /// Expand a directory progressively: read its immediate children instantly
+    /// (a single `read_dir`, no recursive stat walk), apply cached stats where
+    /// fresh, and background-scan the rest. So expanding a huge folder shows its
+    /// contents at once (unscanned dirs dimmed) instead of freezing the UI while
+    /// it recurses the whole subtree.
+    pub(super) fn expand_dir(&mut self, id: NodeId) {
+        if self.tree.node(id).is_archive {
+            // Archives list from an in-memory index — fast, no disk recursion.
+            self.tree.scan(id, &self.registry);
+            return;
+        }
+        self.tree.scan_shallow(id, &self.registry);
+        let kids = self.tree.node(id).children.clone().unwrap_or_default();
+        let mut misses = Vec::new();
+        for k in kids {
+            if !self.tree.node(k).pending {
+                continue;
+            }
+            let p = self.tree.node(k).path.clone();
+            if let Some((c, s)) = self.dir_cache.get_fresh(&p) {
+                self.tree.apply_stats(&p, c, s); // instant from cache
+            } else {
+                misses.push(p);
+            }
+        }
+        if !misses.is_empty() {
+            self.scan_done = 0;
+            self.scan_total = misses.len();
+            crate::event::spawn_dir_stats(misses, self.tx.clone());
+        }
+    }
+
     pub(super) fn expand(&mut self) {
         // On a song — or in the flat fuzzy-result list, where there are no tree
         // nodes to expand — treat l / → as a downward move, matching j / Down.
@@ -23,7 +55,7 @@ impl App {
             self.move_cursor(1);
             return;
         }
-        self.tree.scan(id, &self.registry);
+        self.expand_dir(id);
         self.tree.nodes[id].expanded = true;
         self.refilter_keep();
         // Descend: move the cursor onto the dir's first visible child, if any.
@@ -67,7 +99,7 @@ impl App {
             if expanded {
                 self.close_archive_if_any(id);
             } else {
-                self.tree.scan(id, &self.registry);
+                self.expand_dir(id);
             }
             self.tree.nodes[id].expanded = !expanded;
             self.refilter_keep();

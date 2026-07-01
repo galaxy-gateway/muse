@@ -95,11 +95,16 @@ pub struct App {
     /// so re-launches skip re-parsing unchanged files.
     pub(super) meta_disk: crate::metacache::MetaCache,
     pub wave_cache: HashMap<PathBuf, Vec<(f32, f32)>>,
+    /// LRU insertion order for `wave_cache` (oldest first), for bounded eviction.
+    pub(super) wave_order: Vec<PathBuf>,
     pub wave_pending: Option<PathBuf>,
     pub wave_gen: u64,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
+    /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
+    /// was the main memory sink when browsing a large library.
     pub wave_art: HashMap<PathBuf, Option<image::RgbImage>>,
+    pub(super) art_order: Vec<PathBuf>,
     pub(super) art_pending: Option<PathBuf>,
     /// Show cover art (panel thumbnails) at all — off by default, toggled with
     /// `i`. Kept off unless asked because terminal image rendering is imperfect.
@@ -269,9 +274,11 @@ impl App {
             meta_cache: HashMap::new(),
             meta_disk: crate::metacache::MetaCache::load(),
             wave_cache: HashMap::new(),
+            wave_order: Vec::new(),
             wave_pending: None,
             wave_gen: 0,
             wave_art: HashMap::new(),
+            art_order: Vec::new(),
             art_pending: None,
             show_art: false,
             picker: None,
@@ -438,6 +445,30 @@ impl App {
         self.persist();
         self.meta_disk.save();
         self.dir_cache.save();
+    }
+
+    /// Paths never evicted from the browse caches (currently in view/playing).
+    fn keep_paths(&self) -> Vec<PathBuf> {
+        let mut v = Vec::new();
+        if let Some(p) = &self.now_playing {
+            v.push(p.clone());
+        }
+        if let Some(p) = self.cursor_path() {
+            v.push(p);
+        }
+        v
+    }
+
+    fn evict_art(&mut self) {
+        const ART_CAP: usize = 24;
+        let keep = self.keep_paths();
+        evict_lru(&mut self.wave_art, &mut self.art_order, ART_CAP, &keep);
+    }
+
+    fn evict_wave(&mut self) {
+        const WAVE_CAP: usize = 64;
+        let keep = self.keep_paths();
+        evict_lru(&mut self.wave_cache, &mut self.wave_order, WAVE_CAP, &keep);
     }
 
     /// Install the terminal-graphics picker detected at startup. A real pixel
@@ -626,12 +657,16 @@ impl App {
                 // correct for their path, and a now-playing request must not be
                 // dropped just because the tree selection moved on.
                 self.wave_cache.insert(path.clone(), bins);
+                touch_lru(&mut self.wave_order, &path);
+                self.evict_wave();
                 if self.wave_pending.as_ref() == Some(&path) {
                     self.wave_pending = None;
                 }
             }
             AppEvent::Art(path, art) => {
                 self.wave_art.insert(path.clone(), art);
+                touch_lru(&mut self.art_order, &path);
+                self.evict_art();
                 if self.art_pending.as_ref() == Some(&path) {
                     self.art_pending = None;
                 }
@@ -721,6 +756,35 @@ impl App {
             play_frac,
         }
     }
+}
+
+/// Move (or add) `path` to the back of an LRU order list (most-recently-used).
+fn touch_lru(order: &mut Vec<PathBuf>, path: &Path) {
+    if let Some(i) = order.iter().position(|p| p == path) {
+        order.remove(i);
+    }
+    order.push(path.to_path_buf());
+}
+
+/// Evict the oldest entries from `map` (tracked by `order`) down to `cap`, never
+/// dropping a `keep` path (now-playing / selection).
+fn evict_lru<V>(
+    map: &mut HashMap<PathBuf, V>,
+    order: &mut Vec<PathBuf>,
+    cap: usize,
+    keep: &[PathBuf],
+) {
+    let mut i = 0;
+    while map.len() > cap && i < order.len() {
+        let k = order[i].clone();
+        if keep.contains(&k) {
+            i += 1;
+            continue;
+        }
+        map.remove(&k);
+        order.remove(i);
+    }
+    order.retain(|k| map.contains_key(k));
 }
 
 /// A file's final path component as a lossy `String` (empty if it has none).
