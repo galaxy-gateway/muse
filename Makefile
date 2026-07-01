@@ -29,7 +29,7 @@ endef
 
 .PHONY: help build release run probe test check fmt fmt-check lint audit \
         clean install uninstall tag cross-setup build-all \
-        win-x64 win-arm mac-x64 mac-arm linux-x64 linux-arm
+        win-x64 win-x86 win-arm mac-x64 mac-arm linux-x64 linux-arm
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} \
@@ -91,6 +91,8 @@ mac-x64: ## macOS x86_64  -> dist/muse-macos-x86_64
 
 win-x64: ## Windows x86_64 -> dist/muse-windows-x86_64.exe
 	$(call cross_build,$(WIN_X64),$(BIN)-windows-x86_64.exe,zig)
+
+win-x86: win-x64 ## Alias for win-x64
 
 win-arm: ## Windows arm64  -> dist/muse-windows-aarch64.exe
 	$(call cross_build,$(WIN_ARM),$(BIN)-windows-aarch64.exe,zig)
