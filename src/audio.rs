@@ -226,6 +226,24 @@ impl AudioEngine {
             }
         });
 
+        // --- background full-decoder thread ---------------------------------
+        // When an Open starts on a fast prefix (instant playback), the decode
+        // thread asks here for the complete track; the finished buffer is swapped
+        // in seamlessly once ready. Separate from the preloader so a click never
+        // fights the gapless next-track prefetch for the loader.
+        let (full_req_tx, full_req_rx) = unbounded::<PathBuf>();
+        let (full_done_tx, full_done_rx) = unbounded::<(PathBuf, DecodedAudio)>();
+        thread::spawn(move || {
+            while let Ok(mut path) = full_req_rx.recv() {
+                while let Ok(p) = full_req_rx.try_recv() {
+                    path = p;
+                }
+                if let Ok(dec) = load_track_safe(&path, device_sr) {
+                    let _ = full_done_tx.send((path, dec));
+                }
+            }
+        });
+
         // --- decode thread --------------------------------------------------
         // The decode thread advances into a preloaded track on its own at a
         // sample-accurate boundary (no UI round-trip) and announces the switch
@@ -239,8 +257,18 @@ impl AudioEngine {
             let dur_frames = dur_frames.clone();
             thread::spawn(move || {
                 decode_loop(
-                    cmd_rx, loaded_rx, advance_tx, producer, device_sr, playing, volume,
-                    pos_frames, dur_frames, flush_gen,
+                    cmd_rx,
+                    loaded_rx,
+                    full_req_tx,
+                    full_done_rx,
+                    advance_tx,
+                    producer,
+                    device_sr,
+                    playing,
+                    volume,
+                    pos_frames,
+                    dur_frames,
+                    flush_gen,
                 );
             });
         }
@@ -303,9 +331,12 @@ impl AudioEngine {
 }
 
 /// Decode-thread main loop: owns the current track in memory and feeds the ring.
+#[allow(clippy::too_many_arguments)]
 fn decode_loop(
     cmd_rx: Receiver<TransportCmd>,
     loaded_rx: Receiver<(PathBuf, DecodedAudio)>,
+    full_req_tx: Sender<PathBuf>,
+    full_done_rx: Receiver<(PathBuf, DecodedAudio)>,
     advance_tx: Sender<PathBuf>,
     mut producer: rtrb::Producer<f32>,
     device_sr: u32,
@@ -320,11 +351,25 @@ fn decode_loop(
     // Track decoded ahead of time by the loader thread, ready for an instant,
     // gapless switch when its path is Open-ed.
     let mut preloaded: Option<(PathBuf, DecodedAudio)> = None;
+    // Progressive decode: while `partial` is set, `audio` holds only the opening
+    // prefix and `current_path`'s full buffer is decoding in the background. When
+    // it arrives it replaces `audio` in place (cursor preserved) — seamless,
+    // because the same deterministic resampler yields identical early frames.
+    let mut current_path: Option<PathBuf> = None;
+    let mut partial = false;
 
     loop {
         // Pick up any finished preload (keep only the most recent).
         while let Ok(item) = loaded_rx.try_recv() {
             preloaded = Some(item);
+        }
+        // Swap the completed full track in over its prefix (same path only).
+        while let Ok((path, dec)) = full_done_rx.try_recv() {
+            if partial && current_path.as_ref() == Some(&path) {
+                dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
+                audio = Some(dec);
+                partial = false;
+            }
         }
         // Drain all pending commands into a batch. Coalescing here is what keeps
         // rapid song-switching responsive: only the LAST Open is actually decoded
@@ -351,22 +396,47 @@ fn decode_loop(
                     // every tick and storm-advance through the list.
                     audio = None;
                     cursor = 0;
+                    partial = false;
+                    current_path = Some(path.clone());
                     pos_frames.store(0, Ordering::Relaxed);
                     dur_frames.store(0, Ordering::Relaxed);
                     playing.store(false, Ordering::Relaxed);
                     // Flush the previous track's buffered tail so the switch is
                     // immediate (no stale audio plays out first).
                     flush_gen.fetch_add(1, Ordering::Relaxed);
-                    // Use the preloaded buffer if it matches (no decode latency);
-                    // otherwise decode synchronously now.
-                    let dec = match preloaded.take() {
-                        Some((p, d)) if p == path => Ok(d),
-                        _ => load_track_safe(&path, device_sr),
-                    };
-                    if let Ok(dec) = dec {
-                        dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
-                        audio = Some(dec);
-                        playing.store(true, Ordering::Relaxed);
+                    match preloaded.take() {
+                        // Prefetched (gapless): full buffer already in hand.
+                        Some((p, d)) if p == path => {
+                            dur_frames.store(d.frames() as u64, Ordering::Relaxed);
+                            audio = Some(d);
+                            playing.store(true, Ordering::Relaxed);
+                        }
+                        _ => {
+                            // Not prefetched: start on a fast prefix and pull the
+                            // full track in the background for a seamless swap.
+                            match load_prefix_safe(&path, device_sr) {
+                                Ok((prefix, total)) => {
+                                    dur_frames.store(
+                                        total.unwrap_or(prefix.frames() as u64),
+                                        Ordering::Relaxed,
+                                    );
+                                    audio = Some(prefix);
+                                    partial = true;
+                                    playing.store(true, Ordering::Relaxed);
+                                    let _ = full_req_tx.send(path.clone());
+                                }
+                                // Prefix failed (e.g. ffmpeg-only path already
+                                // returns the whole file): fall back to a full
+                                // synchronous decode.
+                                Err(_) => {
+                                    if let Ok(d) = load_track_safe(&path, device_sr) {
+                                        dur_frames.store(d.frames() as u64, Ordering::Relaxed);
+                                        audio = Some(d);
+                                        playing.store(true, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 TransportCmd::Toggle => {
@@ -425,7 +495,11 @@ fn decode_loop(
             if pushed {
                 pos_frames.store(cursor as u64, Ordering::Relaxed);
             }
-            if cursor >= total {
+            // Reaching the prefix end before the full track has swapped in is not
+            // the real end — hold (the ring briefly drains) until the full buffer
+            // arrives. With a 2s prefix vs sub-second decode this is never hit in
+            // practice, but it prevents a premature advance on a slow decode.
+            if cursor >= total && !partial {
                 // End of track. If the next track was preloaded, splice straight
                 // into it: keep the ring fed across the seam (its ~250ms tail is
                 // still draining to the DAC) so the boundary is sample-accurate
@@ -436,6 +510,8 @@ fn decode_loop(
                         dur_frames.store(dec.frames() as u64, Ordering::Relaxed);
                         audio = Some(dec);
                         cursor = 0;
+                        partial = false;
+                        current_path = Some(path.clone());
                         pos_frames.store(0, Ordering::Relaxed);
                         let _ = advance_tx.send(path);
                     }
@@ -461,55 +537,94 @@ fn load_track_safe(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
 
 /// Decode a file to interleaved stereo at the device sample rate.
 fn load_track(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
-    let dec = decode_any(path)?;
+    let (dec, _) = decode_any(path, None)?;
+    Ok(to_device_rate(dec, device_sr))
+}
+
+/// Resample a native-rate decode to the output device rate (no-op if it already
+/// matches).
+fn to_device_rate(dec: DecodedAudio, device_sr: u32) -> DecodedAudio {
     if dec.sample_rate == device_sr {
-        Ok(dec)
+        dec
     } else {
-        let samples = resample_stereo(&dec.samples, dec.sample_rate, device_sr);
-        Ok(DecodedAudio {
+        DecodedAudio {
             sample_rate: device_sr,
-            samples,
-        })
+            samples: resample_stereo(&dec.samples, dec.sample_rate, device_sr),
+        }
     }
+}
+
+/// Seconds of audio decoded synchronously for an instant start before the full
+/// track is swapped in. Large enough to cover the background full-decode wall
+/// time on any reasonable file, small enough to decode in a few ms.
+const PREFIX_SECS: f64 = 2.0;
+
+/// Decode just the opening `PREFIX_SECS` of `path` (panic-safe), plus the real
+/// total duration in device frames when known. Used to start playback instantly;
+/// `full_decode_safe` later supplies the rest.
+fn load_prefix_safe(path: &Path, device_sr: u32) -> Result<(DecodedAudio, Option<u64>)> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (dec, total_native) = decode_any(path, Some(PREFIX_SECS))?;
+        let native_sr = dec.sample_rate;
+        let audio = to_device_rate(dec, device_sr);
+        let total_device =
+            total_native.map(|t| (t as f64 * device_sr as f64 / native_sr as f64) as u64);
+        Ok((audio, total_device))
+    }))
+    .unwrap_or_else(|_| Err(anyhow!("decoder panicked on {}", path.display())))
 }
 
 /// Decode `path` to interleaved stereo at its native rate, transparently
 /// handling both disk files and in-archive virtual paths (bytes from the
 /// in-memory store). symphonia first, ffmpeg as a fallback.
-fn decode_any(path: &Path) -> Result<DecodedAudio> {
+fn decode_any(path: &Path, limit_secs: Option<f64>) -> Result<(DecodedAudio, Option<u64>)> {
+    // ffmpeg has no prefix mode, so its fallback always returns the full track;
+    // its total frame count is therefore exact.
+    let full = |d: DecodedAudio| {
+        let n = d.frames() as u64;
+        (d, Some(n))
+    };
     if let Some((arc, inner)) = crate::archive::split_virtual(path) {
         let bytes = crate::archive::read(&arc, &inner)
             .ok_or_else(|| anyhow!("archive entry unreadable: {inner}"))?;
         let ext = Path::new(&inner).extension().and_then(|e| e.to_str());
         let src = Box::new(MemSource::new(bytes.clone()));
-        decode_symphonia_source(src, ext).or_else(|_| decode_ffmpeg_bytes(&bytes))
+        decode_symphonia_source(src, ext, limit_secs)
+            .or_else(|_| decode_ffmpeg_bytes(&bytes).map(full))
     } else {
-        decode_symphonia(path).or_else(|_| decode_ffmpeg(path))
+        decode_symphonia(path, limit_secs).or_else(|_| decode_ffmpeg(path).map(full))
     }
 }
 
-fn decode_symphonia(path: &Path) -> Result<DecodedAudio> {
+fn decode_symphonia(path: &Path, limit_secs: Option<f64>) -> Result<(DecodedAudio, Option<u64>)> {
     use symphonia::core::io::MediaSourceStream;
     let file = File::open(path)?;
     let src = MediaSourceStream::new(Box::new(file), Default::default());
     let ext = path.extension().and_then(|e| e.to_str());
-    decode_symphonia_stream(src, ext)
+    decode_symphonia_stream(src, ext, limit_secs)
 }
 
 /// Decode from any symphonia `MediaSource` (disk file or in-memory bytes).
 fn decode_symphonia_source(
     src: Box<dyn symphonia::core::io::MediaSource>,
     ext: Option<&str>,
-) -> Result<DecodedAudio> {
+    limit_secs: Option<f64>,
+) -> Result<(DecodedAudio, Option<u64>)> {
     use symphonia::core::io::MediaSourceStream;
     let mss = MediaSourceStream::new(src, Default::default());
-    decode_symphonia_stream(mss, ext)
+    decode_symphonia_stream(mss, ext, limit_secs)
 }
 
+/// Decode a symphonia stream to interleaved stereo at its native rate. When
+/// `limit_secs` is set, stop after roughly that many seconds of audio (used to
+/// decode just a fast prefix for instant playback). Also returns the track's
+/// total native frame count when the container advertises it, so callers can
+/// report the real duration even from a truncated prefix.
 fn decode_symphonia_stream(
     mss: symphonia::core::io::MediaSourceStream,
     ext: Option<&str>,
-) -> Result<DecodedAudio> {
+    limit_secs: Option<f64>,
+) -> Result<(DecodedAudio, Option<u64>)> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
     use symphonia::core::errors::Error as SymErr;
@@ -541,6 +656,8 @@ fn decode_symphonia_stream(
         .clone();
     let track_id = track.id;
     let sr = track.codec_params.sample_rate.unwrap_or(44100);
+    let n_frames = track.codec_params.n_frames;
+    let limit_frames = limit_secs.map(|s| (s * sr as f64) as usize);
     let mut decoder =
         symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
 
@@ -583,14 +700,23 @@ fn decode_symphonia_stream(
             Err(SymErr::DecodeError(_)) => continue,
             Err(_) => break,
         }
+        // Prefix mode: stop once we have enough audio for an instant start.
+        if let Some(lim) = limit_frames
+            && out.len() / 2 >= lim
+        {
+            break;
+        }
     }
     if out.is_empty() {
         return Err(anyhow!("symphonia decoded no audio"));
     }
-    Ok(DecodedAudio {
-        sample_rate: sr,
-        samples: out,
-    })
+    Ok((
+        DecodedAudio {
+            sample_rate: sr,
+            samples: out,
+        },
+        n_frames,
+    ))
 }
 
 fn decode_ffmpeg(path: &Path) -> Result<DecodedAudio> {
@@ -737,7 +863,7 @@ fn resample_linear(input: &[f32], from: u32, to: u32) -> Vec<f32> {
 
 /// Compute `n_bins` (min,max) mono peak bins for a whole file (static waveform).
 pub fn waveform_bins(path: &Path, n_bins: usize) -> Result<Vec<(f32, f32)>> {
-    let dec = decode_any(path)?;
+    let (dec, _) = decode_any(path, None)?;
     let frames = dec.frames();
     if frames == 0 {
         return Ok(vec![(0.0, 0.0); n_bins]);
