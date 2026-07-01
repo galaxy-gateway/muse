@@ -4,7 +4,7 @@
 use ratatui::Frame;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect, render_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, render_sparks};
 use crate::color::scale;
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
@@ -12,9 +12,29 @@ use crate::util::noise;
 pub struct Matrix;
 
 impl ThemeEffect for Matrix {
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
+    fn knobs(&self) -> &'static [Knob] {
+        &[
+            Knob::Density,
+            Knob::Speed,
+            Knob::Persistence,
+            Knob::BeatSync,
+        ]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            density: 0.5,
+            speed: 0.5,
+            persistence: 0.5,
+            beat_sync: 0.5,
+            ..Default::default()
+        }
+    }
+
+    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
         let n = noise(frame as u32 / 2, (offset * 90.0) as u32) % 100;
-        scale(base, 0.5 + 0.5 * (n as f64 / 100.0))
+        let b = (0.5 + 0.5 * (n as f64 / 100.0) + beat as f64 * 0.35).min(1.0);
+        scale(base, b)
     }
 
     fn on_click(&self, sim: &mut ParticleSim, ctx: &FrameCtx, col: u16, row: u16) {
@@ -58,17 +78,38 @@ impl ThemeEffect for Matrix {
             return;
         }
         let (f, w) = (ctx.frame as u32, s.width as u32);
-        for i in 0..3u32 {
+        // Density = columns/frame; speed = fall rate; persistence = trail length.
+        let cols = 1 + (ctx.tuning.density * 5.0) as u32;
+        let vy = |seed: u32| 0.3 + ctx.tuning.speed * 0.6 + (seed % 3) as f32 * 0.15;
+        let life = (90.0 + ctx.tuning.persistence * 160.0) as u16;
+        for i in 0..cols {
             let seed = noise(f + i, 0x4A7);
             sim.push(Spark {
                 x: (s.x as u32 + seed % w) as f32,
                 y: s.y as f32,
                 vx: 0.0,
-                vy: 0.5 + (seed % 3) as f32 * 0.18,
+                vy: vy(seed),
                 age: 0,
-                life: 150,
+                life,
                 seed,
             });
+        }
+        // Bass beat: a wave of new columns rains down at once.
+        let bass = ctx.beat_bands[0] * ctx.tuning.beat_sync;
+        if bass > 0.25 {
+            let wave = (bass * 20.0) as u32;
+            for i in 0..wave {
+                let seed = noise(f.wrapping_add(i * 61), 0x4A8);
+                sim.push(Spark {
+                    x: (s.x as u32 + seed % w) as f32,
+                    y: s.y as f32,
+                    vx: 0.0,
+                    vy: vy(seed) + bass * 0.4,
+                    age: 0,
+                    life,
+                    seed,
+                });
+            }
         }
         sim.cap();
     }

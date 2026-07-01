@@ -4,7 +4,7 @@
 use ratatui::Frame;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect, render_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, render_sparks};
 use crate::color::hue;
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
@@ -12,8 +12,23 @@ use crate::util::noise;
 pub struct Rave;
 
 impl ThemeEffect for Rave {
-    fn border(&self, _base: Color, frame: u64, offset: f64) -> Color {
-        hue(frame as f64 * 0.05 + offset)
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Intensity, Knob::Strobe, Knob::BeatSync, Knob::Speed]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            intensity: 0.7,
+            strobe: 0.6,
+            beat_sync: 0.8,
+            speed: 0.6,
+            ..Default::default()
+        }
+    }
+
+    fn border(&self, _base: Color, frame: u64, offset: f64, beat: f32) -> Color {
+        // Rainbow spin with a hue kick on the beat.
+        hue(frame as f64 * 0.05 + offset + beat as f64 * 0.25)
     }
 
     fn on_click(&self, sim: &mut ParticleSim, ctx: &FrameCtx, col: u16, row: u16) {
@@ -27,24 +42,31 @@ impl ThemeEffect for Rave {
             return;
         }
         let (f, w) = (ctx.frame as u32, s.width as u32);
-        for i in 0..4u32 {
+        // Confetti volume scales with intensity; motion with speed.
+        let confetti = 1 + (ctx.tuning.intensity * 6.0) as u32;
+        let spd = 0.05 + ctx.tuning.speed * 0.12;
+        for i in 0..confetti {
             let seed = noise(f + i, 0xACE);
             sim.push(Spark {
                 x: (s.x as u32 + seed % w) as f32,
                 y: (s.y as u32 + (seed / 7) % s.height as u32) as f32,
-                vx: ((seed % 9) as f32 - 4.0) * 0.1,
-                vy: ((seed / 9 % 9) as f32 - 4.0) * 0.1,
+                vx: ((seed % 9) as f32 - 4.0) * spd,
+                vy: ((seed / 9 % 9) as f32 - 4.0) * spd,
                 age: 0,
                 life: 28,
                 seed,
             });
         }
-        // Fireworks on loud beats.
-        if ctx.scope_peak > 0.3 && f % 3 == 0 {
-            let seed = noise(f, 0xF12E);
-            let cx = s.x + (seed % w) as u16;
-            let cy = s.y + (seed / 11 % (s.height as u32 / 2).max(1)) as u16;
-            sim.burst(ctx.frame, cx, cy, 30, 1.0, 20);
+        // Fireworks on the bass beat (scaled by beat-sync).
+        let bass = ctx.beat_bands[0] * ctx.tuning.beat_sync;
+        if bass > 0.25 {
+            let shots = 1 + (bass * 3.0) as u32;
+            for j in 0..shots {
+                let seed = noise(f.wrapping_add(j * 149), 0xF12E);
+                let cx = s.x + (seed % w) as u16;
+                let cy = s.y + (seed / 11 % (s.height as u32 / 2).max(1)) as u16;
+                sim.burst(ctx.frame, cx, cy, 30, 1.0, 20);
+            }
         }
         sim.cap();
     }
@@ -57,9 +79,15 @@ impl ThemeEffect for Rave {
             return;
         }
         let frame = ctx.frame as u32;
+        // Strobing color bands: count from the strobe knob, plus a burst of extra
+        // bands on the beat. `strobe = 0` disables them for a calmer rave.
+        let beat = ctx.beat * ctx.tuning.beat_sync;
+        let bands = (ctx.tuning.strobe * 3.0) as u32 + (beat * 4.0) as u32;
+        if bands == 0 {
+            return;
+        }
         let buf = f.buffer_mut();
-        // A couple of strobing color bands that jump rows every few frames.
-        for b in 0..2u32 {
+        for b in 0..bands {
             let row = noise(frame / 3 + b * 41, b * 7) % h;
             let col = hue((frame as f64 * 0.07) + b as f64 * 0.5);
             let y = area.y + row as u16;

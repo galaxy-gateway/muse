@@ -506,6 +506,12 @@ impl App {
         self.scan_total > 0 && self.scan_done < self.scan_total
     }
 
+    /// Current beat onset pulse (0..1) for border animation. Scaled by the active
+    /// theme's beat-sync knob so a theme with beat-sync 0 gets a still border.
+    pub fn beat_pulse(&self) -> f32 {
+        self.beat.pulse() * self.tunings[self.theme_idx].beat_sync
+    }
+
     /// Whether `p` lives inside the current root directory. Compares canonical
     /// forms so a relative launch dir or symlinks still match; falls back to a
     /// plain prefix check when either path can't be canonicalized.

@@ -72,7 +72,7 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
         .block(
             panel_hint(
                 "theme",
-                border(t, app.frame, t.accent2, 0.14),
+                border(t, app.frame, t.accent2, 0.14, app.beat_pulse()),
                 list_hint,
                 t.dim,
             )
@@ -161,8 +161,13 @@ fn draw_theme_editor(f: &mut Frame, app: &App, area: Rect, knobs: &[crate::effec
     };
     let accent = if focused { t.accent } else { t.dim };
     let p = Paragraph::new(lines).block(
-        panel_hint("tune", border(t, app.frame, accent, 0.5), hint, t.dim)
-            .padding(Padding::horizontal(1)),
+        panel_hint(
+            "tune",
+            border(t, app.frame, accent, 0.5, app.beat_pulse()),
+            hint,
+            t.dim,
+        )
+        .padding(Padding::horizontal(1)),
     );
     f.render_widget(p, area);
 }
@@ -204,7 +209,7 @@ pub(super) fn draw_queue_modal(f: &mut Frame, app: &App) {
         .block(
             panel_hint(
                 "queue",
-                border(t, app.frame, t.accent2, 0.14),
+                border(t, app.frame, t.accent2, 0.14, app.beat_pulse()),
                 "j/k move · J/K reorder · x del · X clear · ⏎ play · w save · esc",
                 t.dim,
             )
@@ -264,7 +269,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
     let p = Paragraph::new(lines).block(
         panel_hint(
             "help",
-            border(t, app.frame, t.accent2, 0.84),
+            border(t, app.frame, t.accent2, 0.84, app.beat_pulse()),
             "q / esc to close",
             t.dim,
         )

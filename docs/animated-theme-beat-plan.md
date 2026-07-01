@@ -85,9 +85,27 @@ Each: **beat** = how it reacts · **knobs** (defaults).
    - **Deferred:** `beat` in `border()`. Threading it through every UI `border()`
      call site is invasive and only border-only themes need it; do it in that
      Phase-2 batch (overlay themes already read `ctx.beat`).
-2. **Phase 2 — themes in batches:** border-only (4) → particle themes (Snow,
-   Bubbles, Starfield, Sakura) → richer (Flame, Electric, Matrix, Rave, Flag).
-   Each: wire `BeatSync`-scaled beat reaction + implement `knobs()`/defaults.
+2. **Phase 2 — themes in batches:** ✅ done — all animated themes now expose
+   `knobs()`/`default_tuning()` and react to the beat:
+   - **Particle:** Snow (density/speed/wind/beat-sync — bass gust), Bubbles
+     (density/speed/beat-sync — bass burst), Starfield (density/speed/beat-sync —
+     warp surge + supernova), Sakura (density/speed/wind/beat-sync + **FollowMouse
+     toggle** — beat gust).
+   - **Border-only:** Prismatic, TransSlow, Ripple, Cmyk — pulse via `beat`
+     (already beat-sync-scaled by `App::beat_pulse`), so they expose only
+     `BeatSync`. `border()` gained a `beat` param threaded from every UI call site.
+   - **Rich:** Flame (intensity/beat-sync/speed — ember eruptions + border flare),
+     Electric (bolts on bass beat + white-arc border), Matrix (density/speed/
+     persistence/beat-sync — bass column wave), Rave (intensity/strobe/beat-sync/
+     speed — bass fireworks, beat strobe bands), Flag (intensity/beat-sync —
+     auto-fireworks).
+   - Glitch/Datamosh/Meltdown unchanged (already beat-driven).
+
+   **Design notes:** `App::beat_pulse()` = raw pulse × active theme's `beat_sync`,
+   so borders get beat-sync for free without threading `Tuning` into `border()`.
+   Overlay/ambient themes read `ctx.tuning` + `ctx.beat`/`ctx.beat_bands`
+   directly. `Tuning::set` snaps toggles to 0/1; `scale()` is only ever called
+   with f ≤ 1 (channels would wrap past 255).
 3. **Phase 3 — polish:** defaults pass (tune each so `BeatSync` default feels
    good, not seizure-y), update `docs/beat-reactive-glitch.md` cross-links, add
    a help note.

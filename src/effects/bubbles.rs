@@ -3,7 +3,7 @@
 use ratatui::Frame;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect, render_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, render_sparks};
 use crate::color::glow;
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
@@ -11,7 +11,20 @@ use crate::util::noise;
 pub struct Bubbles;
 
 impl ThemeEffect for Bubbles {
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Density, Knob::Speed, Knob::BeatSync]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            density: 0.5,
+            speed: 0.4,
+            beat_sync: 0.4,
+            ..Default::default()
+        }
+    }
+
+    fn border(&self, base: Color, frame: u64, offset: f64, _beat: f32) -> Color {
         glow(base, frame, offset)
     }
 
@@ -38,17 +51,38 @@ impl ThemeEffect for Bubbles {
             return;
         }
         let (f, w) = (ctx.frame as u32, s.width as u32);
-        for i in 0..2u32 {
+        let speed = ctx.tuning.speed;
+        // Rise velocity scales with `speed`; spawn count with `density`.
+        let rise = |seed: u32| -(0.15 + speed * 0.4 + (seed % 4) as f32 * 0.08);
+        let count = 1 + (ctx.tuning.density * 4.0) as u32;
+        for i in 0..count {
             let seed = noise(f + i, 0xB0B);
             sim.push(Spark {
                 x: (s.x as u32 + seed % w) as f32,
                 y: (s.y + s.height - 1) as f32,
                 vx: ((seed % 5) as f32 - 2.0) * 0.05,
-                vy: -(0.25 + (seed % 4) as f32 * 0.1),
+                vy: rise(seed),
                 age: 0,
                 life: 150,
                 seed,
             });
+        }
+        // Bass beat: a burst of fast-rising bubbles across the floor.
+        let bass = ctx.beat_bands[0] * ctx.tuning.beat_sync;
+        if bass > 0.25 {
+            let burst = (bass * 14.0) as u32;
+            for i in 0..burst {
+                let seed = noise(f.wrapping_add(i * 97), 0xB0B ^ i);
+                sim.push(Spark {
+                    x: (s.x as u32 + seed % w) as f32,
+                    y: (s.y + s.height - 1) as f32,
+                    vx: ((seed % 7) as f32 - 3.0) * 0.06,
+                    vy: rise(seed) - 0.2,
+                    age: 0,
+                    life: 120,
+                    seed,
+                });
+            }
         }
         sim.cap();
     }

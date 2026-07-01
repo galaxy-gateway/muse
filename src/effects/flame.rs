@@ -4,18 +4,32 @@
 use ratatui::Frame;
 use ratatui::style::{Color, Style};
 
-use super::{FrameCtx, ThemeEffect, nav_sparks, render_sparks, scope_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, nav_sparks, render_sparks, scope_sparks};
 use crate::color::scale;
-use crate::particles::ParticleSim;
+use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
 pub struct Flame;
 
 impl ThemeEffect for Flame {
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
-        // Erratic green flicker on the borders.
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Intensity, Knob::BeatSync, Knob::Speed]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            intensity: 0.6,
+            beat_sync: 0.6,
+            speed: 0.5,
+            ..Default::default()
+        }
+    }
+
+    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
+        // Erratic green flicker, flaring bright on the beat.
         let n = noise(frame as u32 / 2, (offset * 131.0) as u32) % 100;
-        scale(base, 0.55 + 0.45 * (n as f64 / 100.0))
+        let b = (0.55 + 0.45 * (n as f64 / 100.0) + beat as f64 * 0.4).min(1.0);
+        scale(base, b)
     }
 
     fn on_nav(&self, sim: &mut ParticleSim, ctx: &FrameCtx, dir: f32) {
@@ -28,6 +42,26 @@ impl ThemeEffect for Flame {
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
         scope_sparks(sim, ctx);
+        // Beat: embers erupt from the bottom edge, count scaled by intensity.
+        let beat = ctx.beat * ctx.tuning.beat_sync;
+        if beat > 0.3 {
+            let s = ctx.screen;
+            let w = (s.width as u32).max(1);
+            let n = (beat * 18.0 * (0.4 + ctx.tuning.intensity)) as u32;
+            for i in 0..n {
+                let seed = noise(ctx.frame as u32 + i * 53, 0xF1A3);
+                sim.push(Spark {
+                    x: (s.x as u32 + seed % w) as f32,
+                    y: (s.y + s.height - 1) as f32,
+                    vx: ((seed % 7) as f32 - 3.0) * 0.1,
+                    vy: -(0.4 + beat * 0.6 + (seed % 3) as f32 * 0.15),
+                    age: 0,
+                    life: 10 + (seed % 8) as u16,
+                    seed,
+                });
+            }
+            sim.cap();
+        }
     }
 
     fn overlay(&self, f: &mut Frame, sim: &ParticleSim, ctx: &FrameCtx) {

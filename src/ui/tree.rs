@@ -15,7 +15,7 @@ use crate::util::{fmt_size, fmt_time};
 pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
     app.tree_rect = area;
     let t = &app.theme;
-    let bc = border(t, app.frame, t.accent, 0.0);
+    let bc = border(t, app.frame, t.accent, 0.0, app.beat_pulse());
     let filtering = app.filtering || !app.filter.is_empty();
     let yellow = Color::Rgb(0xf1, 0xfa, 0x8c);
     // Title: plain "muse", or "muse /<filter>  esc" with a yellow esc cue.
@@ -230,8 +230,11 @@ pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {
             )));
         }
     }
-    let block =
-        panel("selection", border(t, app.frame, t.accent2, 0.14)).padding(Padding::horizontal(1));
+    let block = panel(
+        "selection",
+        border(t, app.frame, t.accent2, 0.14, app.beat_pulse()),
+    )
+    .padding(Padding::horizontal(1));
     let inner = block.inner(area);
     f.render_widget(block, area);
     // Cover thumbnail on the left (when available), detail text to its right.

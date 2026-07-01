@@ -133,7 +133,7 @@ impl ThemeEffect for Meltdown {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
+    fn border(&self, base: Color, frame: u64, offset: f64, _beat: f32) -> Color {
         let n = noise(frame as u32 / 9, (offset * 200.0) as u32) % 100;
         if n < 3 {
             CYAN

@@ -35,9 +35,10 @@ pub(super) fn panel_hint<'a>(
 }
 
 /// Border accent for a panel: delegates to the theme's effect, which returns the
-/// static `base` or an animated color. `offset` spreads animation across panels.
-pub(super) fn border(theme: &Theme, frame: u64, base: Color, offset: f64) -> Color {
-    theme.effect.border(base, frame, offset)
+/// static `base` or an animated color. `offset` spreads animation across panels;
+/// `beat` (0..1) lets a theme pulse its borders to the music.
+pub(super) fn border(theme: &Theme, frame: u64, base: Color, offset: f64, beat: f32) -> Color {
+    theme.effect.border(base, frame, offset, beat)
 }
 
 /// Hover affordance over the seek bars: a vertical guide at the pointer column

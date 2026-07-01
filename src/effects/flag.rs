@@ -5,14 +5,45 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect, render_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, render_sparks};
 use crate::particles::ParticleSim;
+use crate::util::noise;
 
 pub struct Flag;
 
 impl ThemeEffect for Flag {
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Intensity, Knob::BeatSync]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            intensity: 0.5,
+            beat_sync: 0.5,
+            ..Default::default()
+        }
+    }
+
     fn on_click(&self, sim: &mut ParticleSim, ctx: &FrameCtx, col: u16, row: u16) {
         sim.burst(ctx.frame, col, row, 26, 0.7, 14);
+    }
+
+    fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
+        // Fireworks auto-launch on the beat; intensity scales the burst size.
+        let beat = ctx.beat * ctx.tuning.beat_sync;
+        if beat > 0.35 {
+            let s = ctx.screen;
+            let (w, h) = (s.width as u32, s.height as u32);
+            if w < 2 || h < 2 {
+                return;
+            }
+            let seed = noise(ctx.frame as u32, 0xF1A6);
+            let cx = s.x + (seed % w) as u16;
+            let cy = s.y + (seed / 11 % (h / 2).max(1)) as u16;
+            let count = 18 + (beat * 24.0 * (0.4 + ctx.tuning.intensity)) as u32;
+            sim.burst(ctx.frame, cx, cy, count, 0.7 + beat * 0.6, 16);
+            sim.cap();
+        }
     }
 
     fn overlay(&self, f: &mut Frame, sim: &ParticleSim, ctx: &FrameCtx) {

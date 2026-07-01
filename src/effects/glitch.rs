@@ -38,7 +38,7 @@ impl ThemeEffect for Glitch {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
+    fn border(&self, base: Color, frame: u64, offset: f64, _beat: f32) -> Color {
         // The border has no audio signal here (fixed trait signature), so keep
         // it tasteful: mostly a slowly breathing green with rare RGB micro-jumps
         // so a static screen isn't dead. The beat lives in `overlay`.

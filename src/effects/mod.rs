@@ -38,8 +38,6 @@ pub enum KnobKind {
 
 /// One user-tunable knob on a configurable theme. Values live on `Tuning` (all
 /// stored as f32 — a `Toggle` is just 0.0/1.0 so one editor handles both kinds).
-// Several variants are wired per-theme in Phase 2; allow until then.
-#[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Knob {
     /// Overall amount / density / frequency of the effect.
@@ -153,8 +151,7 @@ impl Tuning {
         }
     }
 
-    /// Convenience for `Toggle` knobs (used by Phase 2 themes).
-    #[allow(dead_code)]
+    /// Convenience for `Toggle` knobs.
     pub fn is_on(self, k: Knob) -> bool {
         self.get(k) >= 0.5
     }
@@ -210,8 +207,9 @@ pub trait ThemeEffect: Sync {
     }
 
     /// Border accent for a panel: the theme's static `base`, or an animated
-    /// color. `offset` spreads the animation across panels.
-    fn border(&self, base: Color, _frame: u64, _offset: f64) -> Color {
+    /// color. `offset` spreads the animation across panels; `beat` (0..1, already
+    /// scaled by the theme's beat-sync knob upstream) lets borders pulse.
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
         base
     }
 

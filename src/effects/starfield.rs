@@ -4,12 +4,25 @@
 use ratatui::Frame;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect, render_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, render_sparks};
 use crate::particles::ParticleSim;
 
 pub struct Starfield;
 
 impl ThemeEffect for Starfield {
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Density, Knob::Speed, Knob::BeatSync]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            density: 0.5,
+            speed: 0.5,
+            beat_sync: 0.6,
+            ..Default::default()
+        }
+    }
+
     fn on_nav(&self, sim: &mut ParticleSim, ctx: &FrameCtx, _dir: f32) {
         sim.warp(ctx.frame, ctx.screen, 36);
     }
@@ -19,7 +32,21 @@ impl ThemeEffect for Starfield {
     }
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
-        sim.warp(ctx.frame, ctx.screen, 2);
+        // Star spawn rate scales with `density`; `speed` adds a steady stream.
+        let stream = 1 + (ctx.tuning.density * 4.0 + ctx.tuning.speed * 2.0) as u32;
+        sim.warp(ctx.frame, ctx.screen, stream);
+        // Beat: bass warps a burst outward; a strong hit goes supernova at center.
+        let bass = ctx.beat_bands[0] * ctx.tuning.beat_sync;
+        if bass > 0.25 {
+            sim.warp(ctx.frame, ctx.screen, (bass * 40.0) as u32);
+            if bass > 0.6 {
+                let (cx, cy) = (
+                    ctx.screen.x + ctx.screen.width / 2,
+                    ctx.screen.y + ctx.screen.height / 2,
+                );
+                sim.burst(ctx.frame, cx, cy, 40, 1.2, 16);
+            }
+        }
     }
 
     fn overlay(&self, f: &mut Frame, sim: &ParticleSim, ctx: &FrameCtx) {

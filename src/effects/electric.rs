@@ -4,7 +4,7 @@
 use ratatui::Frame;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect, nav_sparks, render_sparks, scope_sparks};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning, nav_sparks, render_sparks, scope_sparks};
 use crate::color::scale;
 use crate::particles::ParticleSim;
 use crate::util::noise;
@@ -12,10 +12,23 @@ use crate::util::noise;
 pub struct Electric;
 
 impl ThemeEffect for Electric {
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
-        // Crackling cyan/white border flicker with occasional bright arcs.
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Intensity, Knob::BeatSync, Knob::Speed]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            intensity: 0.6,
+            beat_sync: 0.7,
+            speed: 0.5,
+            ..Default::default()
+        }
+    }
+
+    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
+        // Crackling cyan/white flicker; a beat forces a bright white arc.
         let n = noise(frame as u32, (offset * 173.0) as u32) % 100;
-        if n < 6 {
+        if beat > 0.4 || n < 6 {
             Color::Rgb(0xff, 0xff, 0xff)
         } else if n < 14 {
             Color::Rgb(0x9d, 0xf0, 0xff)
@@ -43,14 +56,14 @@ impl ThemeEffect for Electric {
         }
         let frame = ctx.frame as u32;
         let sr = ctx.scope_rect;
-        let peak = ctx.scope_peak;
+        // Bass beat (scaled by beat-sync) triggers the strikes; intensity adds bolts.
+        let bass = ctx.beat_bands[0] * ctx.tuning.beat_sync;
         render_sparks(f, sim, area, frame, spark_glyph);
 
-        // Lightning bolts strike inside the oscilloscope when it peaks loud
-        // (same amplitude trigger as the spark particles).
-        if sr.width > 3 && sr.height > 3 && peak >= 0.12 && noise(frame / 2, 7) % 3 == 0 {
+        // Lightning bolts strike inside the oscilloscope on a bass beat.
+        if sr.width > 3 && sr.height > 3 && bass > 0.25 {
             let buf = f.buffer_mut();
-            let bolts = 1 + noise(frame, 3) % 2;
+            let bolts = 1 + (bass * (1.0 + ctx.tuning.intensity * 3.0)) as u32;
             let lo = (sr.x + 1) as i32;
             let hi = (sr.x + sr.width - 2) as i32;
             for b in 0..bolts {

@@ -157,8 +157,11 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(t.dim),
         ))],
     };
-    let block =
-        panel("now playing", border(t, app.frame, t.playing, 0.28)).padding(Padding::horizontal(1));
+    let block = panel(
+        "now playing",
+        border(t, app.frame, t.playing, 0.28, app.beat_pulse()),
+    )
+    .padding(Padding::horizontal(1));
     let inner = block.inner(area);
     f.render_widget(block, area);
     // Cover thumbnail on the left (when available), text to its right.
@@ -248,7 +251,7 @@ fn draw_waveform(
     with_playhead: bool,
 ) {
     let t = &app.theme;
-    let block = panel(title, border(t, app.frame, t.wave, 0.42));
+    let block = panel(title, border(t, app.frame, t.wave, 0.42, app.beat_pulse()));
     let bins = path.as_ref().and_then(|p| app.wave_cache.get(p));
 
     // playhead progress 0..1 if this file is the one playing
@@ -380,7 +383,7 @@ fn draw_scope(f: &mut Frame, app: &App, area: Rect) {
     let canvas = Canvas::default()
         .block(panel_hint(
             &title,
-            border(t, app.frame, t.scope, 0.56),
+            border(t, app.frame, t.scope, 0.56, app.beat_pulse()),
             "v/V preset",
             t.dim,
         ))
@@ -487,7 +490,7 @@ fn draw_spectrum(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         panel_hint(
             "spectrum · live",
-            border(t, app.frame, t.scope, 0.56),
+            border(t, app.frame, t.scope, 0.56, app.beat_pulse()),
             "v/V preset",
             t.dim,
         ),

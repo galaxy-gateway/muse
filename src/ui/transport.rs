@@ -70,7 +70,7 @@ pub(super) fn draw_transport(f: &mut Frame, app: &App, area: Rect) {
     let gauge = Gauge::default()
         .block(panel_hint(
             "transport",
-            border(t, app.frame, t.accent, 0.70),
+            border(t, app.frame, t.accent, 0.70, app.beat_pulse()),
             "space play · n/p next/prev · r loop · t theme · ,/. seek · -/+ vol · ? help",
             t.dim,
         ))

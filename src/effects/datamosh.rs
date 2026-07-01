@@ -42,7 +42,7 @@ impl ThemeEffect for Datamosh {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
+    fn border(&self, base: Color, frame: u64, offset: f64, _beat: f32) -> Color {
         // No audio here (fixed signature) — calm breathing green with rare
         // RGB micro-jumps; the beat lives in `overlay`.
         let n = noise(frame as u32 / 9, (offset * 200.0) as u32) % 100;
