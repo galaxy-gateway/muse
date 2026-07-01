@@ -3,6 +3,7 @@
 mod app;
 mod archive;
 mod audio;
+mod beat;
 mod color;
 mod config;
 mod effects;

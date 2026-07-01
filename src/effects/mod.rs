@@ -39,6 +39,8 @@ pub struct FrameCtx {
     pub hover: Option<(u16, u16)>,
     /// Peak abs amplitude of the current scope window.
     pub scope_peak: f32,
+    /// Beat onset pulse, 0..1: spikes on a beat, decays over a few frames.
+    pub beat: f32,
     /// Selection's visible row within the tree's inner area (sel - scroll), if any.
     pub cursor_row: Option<u16>,
     /// Absolute selected list index — seeds nav-burst RNG so the scatter pattern

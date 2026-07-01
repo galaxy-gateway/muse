@@ -21,6 +21,7 @@ use ratatui::widgets::ListState;
 use souvlaki::MediaControls;
 
 use crate::audio::{AudioEngine, TransportCmd};
+use crate::beat::BeatState;
 use crate::config::{
     SCOPE_PRESETS, ScopePreset, ScopeStyle, Settings, THEMES, Theme, load_settings, save_settings,
 };
@@ -152,6 +153,8 @@ pub struct App {
     pub scope_idx: usize,
     /// FFT band state for the live spectrum visualizer preset.
     pub spectrum: SpectrumState,
+    /// Beat / energy tracker driving beat-reactive theme effects (Glitch).
+    pub beat: BeatState,
 
     pub filter: String,
     pub filtering: bool,
@@ -262,6 +265,7 @@ impl App {
             scope_buf: vec![0.0; crate::audio::SCOPE_LEN * 2],
             scope_idx,
             spectrum,
+            beat: BeatState::new(),
             filter: String::new(),
             filtering: false,
             filtered: Vec::new(),
@@ -513,6 +517,9 @@ impl App {
             AppEvent::Media(e) => self.on_media(e),
             AppEvent::Tick => {
                 self.scope_buf.copy_from_slice(self.engine.scope());
+                // Track beat/energy every tick so beat-reactive effects (Glitch)
+                // always have a fresh signal regardless of the scope preset.
+                self.beat.update(&self.scope_buf, self.engine.is_playing());
                 // Only run the FFT when the spectrum visualizer is the active
                 // preset — it is the sole reader of the band state.
                 if self.scope_preset().style == ScopeStyle::Spectrum {
@@ -586,6 +593,7 @@ impl App {
             np_rect: self.np_rect,
             hover: self.hover,
             scope_peak,
+            beat: self.beat.pulse(),
             cursor_row,
             cursor_index,
             play_frac,
