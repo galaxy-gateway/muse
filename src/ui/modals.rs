@@ -32,7 +32,7 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
                 "  "
             };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<11}", th.name), Style::default().fg(th.media)),
+                Span::styled(format!("{:<15}", th.name), Style::default().fg(th.media)),
                 Span::styled(tag, Style::default().fg(t.dim)),
                 swatch(th.accent),
                 swatch(th.accent2),

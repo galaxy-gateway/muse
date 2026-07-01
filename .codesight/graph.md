@@ -12,7 +12,6 @@
 - `src/effects/aurora.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
 - `src/effects/blackhole.rs` — imported by **1** files
-- `src/effects/bloodmoon.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
 - `src/effects/circuit.rs` — imported by **1** files
 - `src/effects/constellations.rs` — imported by **1** files
@@ -22,6 +21,7 @@
 - `src/effects/flag.rs` — imported by **1** files
 - `src/effects/flame.rs` — imported by **1** files
 - `src/effects/glitch.rs` — imported by **1** files
+- `src/effects/matrix.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 

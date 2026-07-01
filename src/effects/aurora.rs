@@ -45,6 +45,9 @@ impl ThemeEffect for Aurora {
         let reach = 0.35 + ctx.tuning.intensity * 0.35; // fraction of height the curtains fall
         const GLYPHS: [char; 4] = ['░', '▒', '▓', '█'];
         let buf = f.buffer_mut();
+        // Original blank mask (see plasma) so the neighbour test isn't fooled by
+        // our own fills — avoids the every-other-column striping.
+        let blank = super::plasma::blank_mask(buf, area);
         for rx in 0..w {
             let x = rx as f32;
             // Each column's curtain: a waving base height + a slow horizontal drift.
@@ -53,10 +56,14 @@ impl ThemeEffect for Aurora {
                 ((0.15 + reach) * (0.6 + 0.4 * (wave * 0.5 + 0.5)) * h as f32 * (1.0 + beat * 0.3))
                     as u16;
             for ry in 0..bottom.min(h) {
-                let cell = &mut buf[(area.x + rx, area.y + ry)];
-                if cell.symbol() != " " {
+                let idx = ry as usize * w as usize + rx as usize;
+                // Only paint the interior of open blank fields.
+                let ok =
+                    blank[idx] && (rx == 0 || blank[idx - 1]) && (rx + 1 >= w || blank[idx + 1]);
+                if !ok {
                     continue;
                 }
+                let cell = &mut buf[(area.x + rx, area.y + ry)];
                 let depth = ry as f32 / bottom.max(1) as f32; // 0 top .. 1 bottom of curtain
                 // Green low, violet high, teal shimmer at the leading edge.
                 let hue_t = (depth + wave * 0.2).clamp(0.0, 1.0);

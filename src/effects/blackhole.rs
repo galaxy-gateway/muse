@@ -38,33 +38,27 @@ impl ThemeEffect for Blackhole {
     }
 
     fn on_click(&self, sim: &mut ParticleSim, ctx: &FrameCtx, col: u16, row: u16) {
-        sim.burst(ctx.frame, col, row, 40, 1.3, 18);
-    }
-
-    fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
-        // Mass ejection: a bass beat flings matter outward from the center.
-        let bass = ctx.beat_bands[0] * ctx.tuning.beat_sync;
-        if bass > 0.3 {
-            let s = ctx.screen;
-            let (cx, cy) = (s.x + s.width / 2, s.y + s.height / 2);
-            sim.burst(ctx.frame, cx, cy, (bass * 30.0) as u32, 1.1, 16);
-        }
+        sim.burst(ctx.frame, col, row, 30, 1.1, 16);
     }
 
     fn overlay(&self, f: &mut Frame, sim: &ParticleSim, ctx: &FrameCtx) {
         let area = ctx.screen;
         let (w, h) = (area.width as f32, area.height as f32);
-        if w < 8.0 || h < 8.0 {
+        if w < 12.0 || h < 8.0 {
             return;
         }
         render_sparks(f, sim, area, ctx.frame as u32, ejecta_glyph);
 
+        // A full-screen swirl behind the panes: everything is drawn only on empty
+        // cells, so the UI text/borders sit on top and stay perfectly readable —
+        // the accretion disk peeks through the gaps around the boxes.
         let frame = ctx.frame as f32;
         let speed = ctx.tuning.speed;
-        let stars = 20 + (ctx.tuning.density * 80.0) as u32;
+        let stars = 40 + (ctx.tuning.density * 160.0) as u32;
         let cx = area.x as f32 + w / 2.0;
         let cy = area.y as f32 + h / 2.0;
-        let max_r = (h / 2.0).min(w / 4.0); // rows are the tighter axis
+        let max_r = (h / 2.0).max(w / 4.0);
+        let beat = ctx.beat * ctx.tuning.beat_sync;
         let buf = f.buffer_mut();
         let mut plot = |x: f32, y: f32, ch: char, col: Color| {
             let (xi, yi) = (x.round() as i32, y.round() as i32);
@@ -74,20 +68,21 @@ impl ThemeEffect for Blackhole {
                 && yi < area.bottom() as i32
             {
                 let cell = &mut buf[(xi as u16, yi as u16)];
-                cell.set_char(ch);
-                cell.set_fg(col);
+                if cell.symbol() == " " {
+                    cell.set_char(ch);
+                    cell.set_fg(col);
+                }
             }
         };
 
         for k in 0..stars {
-            // prog 0 (outer) → 1 (swallowed), looping; each star offset in phase.
-            let period = 200.0;
-            let prog = ((frame * (0.4 + speed) + k as f32 * 37.0) % period) / period;
+            let period = 240.0;
+            // `speed` floor is very low so it can crawl almost imperceptibly.
+            let prog = ((frame * (0.03 + speed * 1.2) + k as f32 * 31.0) % period) / period;
             let r = max_r * (1.0 - prog);
-            let ang = k as f32 * 2.399_963 + prog * prog * 22.0; // winds up near center
+            let ang = k as f32 * 2.399_963 + prog * prog * 26.0; // winds up near center
             let x = cx + r * ang.cos() * 2.0; // ×2 for cell aspect
             let y = cy + r * ang.sin();
-            // Brighter + hotter closer in.
             let (ch, col) = if prog > 0.82 {
                 ('✦', WHITE)
             } else if prog > 0.5 {
@@ -98,11 +93,10 @@ impl ThemeEffect for Blackhole {
             plot(x, y, ch, col);
         }
 
-        // Accretion ring + dark core.
-        let beat = ctx.beat * ctx.tuning.beat_sync;
-        let ring_r = max_r * 0.14 * (1.0 + beat * 0.4);
-        for i in 0..36 {
-            let a = i as f32 / 36.0 * std::f32::consts::TAU;
+        // Accretion ring, brightening on the beat.
+        let ring_r = (max_r * 0.12 * (1.0 + beat * 0.5)).max(1.0);
+        for i in 0..48 {
+            let a = i as f32 / 48.0 * std::f32::consts::TAU;
             plot(
                 cx + ring_r * a.cos() * 2.0,
                 cy + ring_r * a.sin(),
@@ -110,7 +104,6 @@ impl ThemeEffect for Blackhole {
                 mix(HOT, WHITE, beat as f64),
             );
         }
-        plot(cx, cy, ' ', VOID);
     }
 }
 

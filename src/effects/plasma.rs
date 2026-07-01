@@ -3,11 +3,23 @@
 //! empty cells (block glyphs), leaving UI text readable on top.
 
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use super::{FrameCtx, Knob, ThemeEffect, Tuning};
 use crate::color::hue;
 use crate::particles::ParticleSim;
+
+/// Row-major mask of which cells in `area` are blank (a space), captured *before*
+/// any painting so neighbour tests reflect the original UI, not our own fills.
+/// Shared by the backdrop themes (plasma, aurora).
+pub(super) fn blank_mask(buf: &Buffer, area: Rect) -> Vec<bool> {
+    (0..area.height)
+        .flat_map(|ry| (0..area.width).map(move |rx| (rx, ry)))
+        .map(|(rx, ry)| buf[(area.x + rx, area.y + ry)].symbol() == " ")
+        .collect()
+}
 
 pub struct Plasma;
 
@@ -40,11 +52,19 @@ impl ThemeEffect for Plasma {
         let gain = 1.0 + beat as f64 * 0.5;
         let sat = 0.45 + ctx.tuning.intensity as f64 * 0.45;
         const GLYPHS: [char; 4] = ['█', '▓', '▒', '░'];
+        let (w, h) = (area.width, area.height);
         let buf = f.buffer_mut();
-        for ry in 0..area.height {
-            for rx in 0..area.width {
-                let cell = &mut buf[(area.x + rx, area.y + ry)];
-                if cell.symbol() != " " {
+        // Snapshot the *original* blank mask before painting anything, so the
+        // neighbour test isn't fooled by our own fills (which caused the
+        // every-other-cell checkerboard). A cell fills only if it and its
+        // horizontal neighbours were blank — the interior of open fields.
+        let blank = blank_mask(buf, area);
+        for ry in 0..h {
+            for rx in 0..w {
+                let idx = ry as usize * w as usize + rx as usize;
+                let ok =
+                    blank[idx] && (rx == 0 || blank[idx - 1]) && (rx + 1 >= w || blank[idx + 1]);
+                if !ok {
                     continue;
                 }
                 let (x, y) = (rx as f64, ry as f64);
@@ -64,6 +84,7 @@ impl ThemeEffect for Plasma {
                 }
                 let col = hue(v * 0.35 + 0.72 + t * 0.02); // magenta→violet→cyan band
                 let g = GLYPHS[((1.0 - v) * (sat + 0.5) * 3.0) as usize % GLYPHS.len()];
+                let cell = &mut buf[(area.x + rx, area.y + ry)];
                 cell.set_char(g);
                 cell.set_fg(col);
             }

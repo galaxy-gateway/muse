@@ -117,12 +117,24 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                 let n = app.tree.node(id);
                 let indent = "  ".repeat(n.depth.saturating_sub(1));
                 let playing = app.now_playing.as_deref() == Some(n.path.as_path());
+                // A dir still awaiting its background scan renders dim, so it's
+                // clear which folders are confirmed to hold music and which are
+                // still being counted.
+                let pending_dir = n.is_dir && n.pending;
                 let (icon, color) = if n.is_dir {
-                    (if n.expanded { "▾ " } else { "▸ " }, t.dir)
+                    let c = if pending_dir { t.dim } else { t.dir };
+                    (if n.expanded { "▾ " } else { "▸ " }, c)
                 } else if playing {
                     ("♪ ", t.playing)
                 } else {
                     ("· ", t.media)
+                };
+                let icon_color = if pending_dir {
+                    t.dim
+                } else if n.is_dir {
+                    t.accent2
+                } else {
+                    color
                 };
                 let mut style = Style::default().fg(color);
                 if playing {
@@ -146,10 +158,7 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                     idx,
                     vec![
                         Span::raw(indent),
-                        Span::styled(
-                            icon,
-                            Style::default().fg(if n.is_dir { t.accent2 } else { color }),
-                        ),
+                        Span::styled(icon, Style::default().fg(icon_color)),
                         Span::styled(n.name.clone(), style),
                         Span::styled(meta, Style::default().fg(t.dim)),
                     ],
