@@ -100,6 +100,9 @@ pub struct App {
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     pub wave_art: HashMap<PathBuf, Option<image::RgbImage>>,
     pub(super) art_pending: Option<PathBuf>,
+    /// Show cover art (panel thumbnails) at all — off by default, toggled with
+    /// `i`. Kept off unless asked because terminal image rendering is imperfect.
+    pub show_art: bool,
     /// Terminal graphics support (Kitty/iTerm2/Sixel) detected at startup; `None`
     /// or a half-blocks protocol means we fall back to Unicode half-block art.
     pub(super) picker: Option<ratatui_image::picker::Picker>,
@@ -231,6 +234,7 @@ impl App {
             wave_gen: 0,
             wave_art: HashMap::new(),
             art_pending: None,
+            show_art: false,
             picker: None,
             graphics_capable: false,
             np_thumb_proto: None,

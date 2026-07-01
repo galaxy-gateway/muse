@@ -102,19 +102,22 @@ impl App {
     }
 
     /// Width (cells, incl. a 1-col gap) of the now-playing cover thumbnail, or 0.
+    /// Zero (art hidden) unless the `i` toggle is on.
     pub fn np_thumb_cols(&self) -> u16 {
-        let has = self
-            .now_playing
-            .as_ref()
-            .is_some_and(|p| matches!(self.wave_art.get(p), Some(Some(_))));
+        let has = self.show_art
+            && self
+                .now_playing
+                .as_ref()
+                .is_some_and(|p| matches!(self.wave_art.get(p), Some(Some(_))));
         thumb_cols(self.np_rect, has)
     }
 
     /// Width (cells, incl. a 1-col gap) of the selection cover thumbnail, or 0.
     pub fn sel_thumb_cols(&self) -> u16 {
-        let has = self
-            .cursor_path()
-            .is_some_and(|p| matches!(self.wave_art.get(&p), Some(Some(_))));
+        let has = self.show_art
+            && self
+                .cursor_path()
+                .is_some_and(|p| matches!(self.wave_art.get(&p), Some(Some(_))));
         thumb_cols(self.sel_rect, has)
     }
 

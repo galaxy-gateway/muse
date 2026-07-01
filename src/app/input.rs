@@ -107,6 +107,7 @@ impl App {
             (KeyCode::Char('v'), _) => self.cycle_scope(1),
             (KeyCode::Char('V'), _) => self.cycle_scope(-1),
             (KeyCode::Char('t'), _) => self.open_theme_picker(),
+            (KeyCode::Char('i'), _) => self.show_art = !self.show_art,
             _ => {}
         }
     }
