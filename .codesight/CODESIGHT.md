@@ -4,7 +4,7 @@
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
 > **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~9,100 tokens. **Saves ~8,500 tokens per conversation.**
-> **Last scanned:** 2026-07-01 07:13 — re-run after significant changes
+> **Last scanned:** 2026-07-01 08:07 — re-run after significant changes
 
 ---
 
@@ -27,19 +27,19 @@
 - `src/app/playback.rs` — imported by **1** files
 - `src/app/queue.rs` — imported by **1** files
 - `src/app/shuffle.rs` — imported by **1** files
+- `src/effects/aurora.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
+- `src/effects/blackhole.rs` — imported by **1** files
+- `src/effects/bloodmoon.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
+- `src/effects/circuit.rs` — imported by **1** files
+- `src/effects/constellations.rs` — imported by **1** files
 - `src/effects/datamosh.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
+- `src/effects/fireplace.rs` — imported by **1** files
 - `src/effects/flag.rs` — imported by **1** files
 - `src/effects/flame.rs` — imported by **1** files
 - `src/effects/glitch.rs` — imported by **1** files
-- `src/effects/matrix.rs` — imported by **1** files
-- `src/effects/meltdown.rs` — imported by **1** files
-- `src/effects/rave.rs` — imported by **1** files
-- `src/effects/sakura.rs` — imported by **1** files
-- `src/effects/snow.rs` — imported by **1** files
-- `src/effects/starfield.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -50,9 +50,9 @@
 - `src/app/playback.rs` ← `src/app/mod.rs`
 - `src/app/queue.rs` ← `src/app/mod.rs`
 - `src/app/shuffle.rs` ← `src/app/mod.rs`
+- `src/effects/aurora.rs` ← `src/effects/mod.rs`
 - `src/effects/basic.rs` ← `src/effects/mod.rs`
-- `src/effects/bubbles.rs` ← `src/effects/mod.rs`
-- `src/effects/datamosh.rs` ← `src/effects/mod.rs`
+- `src/effects/blackhole.rs` ← `src/effects/mod.rs`
 
 ---
 

@@ -13,19 +13,30 @@ use ratatui::style::Color;
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
+mod aurora;
 mod basic;
+mod blackhole;
+mod bloodmoon;
 mod bubbles;
+mod circuit;
+mod constellations;
 mod datamosh;
 mod electric;
+mod fireplace;
 mod flag;
 mod flame;
 mod glitch;
 mod matrix;
 mod meltdown;
+mod plasma;
 mod rave;
 mod sakura;
+mod samurai;
 mod snow;
 mod starfield;
+mod sumie;
+mod thunderstorm;
+mod vaporwave;
 
 /// How a knob is edited/displayed in the theme modal.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -339,4 +350,15 @@ pub static MATRIX: matrix::Matrix = matrix::Matrix;
 pub static BUBBLES: bubbles::Bubbles = bubbles::Bubbles;
 pub static STARFIELD: starfield::Starfield = starfield::Starfield;
 pub static SAKURA: sakura::Sakura = sakura::Sakura;
+pub static SAMURAI: samurai::Samurai = samurai::Samurai;
+pub static VAPORWAVE: vaporwave::Vaporwave = vaporwave::Vaporwave;
+pub static PLASMA: plasma::Plasma = plasma::Plasma;
+pub static AURORA: aurora::Aurora = aurora::Aurora;
+pub static BLACKHOLE: blackhole::Blackhole = blackhole::Blackhole;
+pub static FIREPLACE: fireplace::Fireplace = fireplace::Fireplace;
+pub static THUNDERSTORM: thunderstorm::Thunderstorm = thunderstorm::Thunderstorm;
+pub static BLOODMOON: bloodmoon::Bloodmoon = bloodmoon::Bloodmoon;
+pub static CIRCUIT: circuit::Circuit = circuit::Circuit;
+pub static CONSTELLATIONS: constellations::Constellations = constellations::Constellations;
+pub static SUMIE: sumie::Sumie = sumie::Sumie;
 pub static RAVE: rave::Rave = rave::Rave;
