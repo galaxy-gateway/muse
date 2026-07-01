@@ -3,8 +3,8 @@
 > **Stack:** raw-http | none | unknown | rust
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
-> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,700 tokens. **Saves ~8,100 tokens per conversation.**
-> **Last scanned:** 2026-07-01 00:33 — re-run after significant changes
+> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~8,900 tokens. **Saves ~8,300 tokens per conversation.**
+> **Last scanned:** 2026-07-01 02:01 — re-run after significant changes
 
 ---
 
@@ -29,17 +29,17 @@
 - `src/app/shuffle.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
+- `src/effects/datamosh.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
 - `src/effects/flag.rs` — imported by **1** files
 - `src/effects/flame.rs` — imported by **1** files
 - `src/effects/glitch.rs` — imported by **1** files
 - `src/effects/matrix.rs` — imported by **1** files
+- `src/effects/meltdown.rs` — imported by **1** files
 - `src/effects/rave.rs` — imported by **1** files
 - `src/effects/sakura.rs` — imported by **1** files
 - `src/effects/snow.rs` — imported by **1** files
 - `src/effects/starfield.rs` — imported by **1** files
-- `src/app.rs` — imported by **1** files
-- `src/archive.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -52,7 +52,7 @@
 - `src/app/shuffle.rs` ← `src/app/mod.rs`
 - `src/effects/basic.rs` ← `src/effects/mod.rs`
 - `src/effects/bubbles.rs` ← `src/effects/mod.rs`
-- `src/effects/electric.rs` ← `src/effects/mod.rs`
+- `src/effects/datamosh.rs` ← `src/effects/mod.rs`
 
 ---
 

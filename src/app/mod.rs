@@ -25,7 +25,7 @@ use crate::beat::BeatState;
 use crate::config::{
     SCOPE_PRESETS, ScopePreset, ScopeStyle, Settings, THEMES, Theme, load_settings, save_settings,
 };
-use crate::effects::FrameCtx;
+use crate::effects::{FrameCtx, Tuning};
 use crate::event::AppEvent;
 use crate::media::{Meta, Registry};
 use crate::model::{NodeId, TreeModel};
@@ -190,6 +190,13 @@ pub struct App {
     pub show_theme: bool,
     pub theme_sel: usize,
     pub(super) theme_prev: usize,
+    /// Per-theme knob values, indexed parallel to `THEMES`. Non-configurable
+    /// themes carry their (unused) default. Edits apply + save live.
+    pub tunings: Vec<Tuning>,
+    /// Whether the theme modal's knob-editor sub-panel has focus (toggled by Tab).
+    pub theme_config: bool,
+    /// Highlighted knob within the editor.
+    pub config_sel: usize,
     pub should_quit: bool,
 
     /// OS media-key integration (now-playing controls). `None` if unavailable.
@@ -222,6 +229,18 @@ impl App {
             .as_deref()
             .and_then(|name| THEMES.iter().position(|t| t.name == name))
             .unwrap_or(0);
+        // Seed each theme's knobs from its effect default, then apply any saved
+        // overrides by theme name.
+        let tunings: Vec<Tuning> = THEMES
+            .iter()
+            .map(|th| {
+                let mut tn = th.effect.default_tuning();
+                if let Some(cfg) = settings.theme_tuning.as_ref().and_then(|m| m.get(th.name)) {
+                    cfg.apply(&mut tn);
+                }
+                tn
+            })
+            .collect();
         let mut app = Self {
             tree,
             registry,
@@ -286,6 +305,9 @@ impl App {
             show_theme: false,
             theme_sel: theme_idx,
             theme_prev: theme_idx,
+            tunings,
+            theme_config: false,
+            config_sel: 0,
             media: init_media(&tx),
             media_playing: false,
             should_quit: false,
@@ -373,6 +395,14 @@ impl App {
             session_volume: Some(self.engine.volume()),
             session_loop: Some(self.loop_mode.as_str().to_string()),
             session_cursor: self.cursor_path().as_ref().map(p2s),
+            theme_tuning: Some(
+                THEMES
+                    .iter()
+                    .zip(&self.tunings)
+                    .filter(|(th, _)| !th.effect.knobs().is_empty())
+                    .map(|(th, tn)| (th.name.to_string(), crate::config::TuningCfg::from(tn)))
+                    .collect(),
+            ),
         }
     }
 
@@ -594,6 +624,8 @@ impl App {
             hover: self.hover,
             scope_peak,
             beat: self.beat.pulse(),
+            beat_bands: self.beat.bands(),
+            tuning: self.tunings[self.theme_idx],
             cursor_row,
             cursor_index,
             play_frac,

@@ -1,11 +1,12 @@
 //! Theme + (future) config. Colors live here so the "elegant" polish is one place.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-use crate::effects::ThemeEffect;
+use crate::effects::{ThemeEffect, Tuning};
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -253,6 +254,32 @@ pub const THEMES: &[Theme] = &[
         effect: &crate::effects::GLITCH,
     },
     Theme {
+        name: "datamosh",
+        accent: rgb(0x00, 0xff, 0xcc),
+        accent2: rgb(0xff, 0x00, 0xcc),
+        dir: rgb(0x2a, 0xd1, 0x4f),
+        media: rgb(0xb9, 0xff, 0xc8),
+        dim: rgb(0x2f, 0x7d, 0x44),
+        scope: rgb(0x33, 0xff, 0x88),
+        wave: rgb(0x1f, 0x9d, 0x3a),
+        playing: rgb(0x66, 0xff, 0xaa),
+        bg_sel: rgb(0x05, 0x1a, 0x10),
+        effect: &crate::effects::DATAMOSH,
+    },
+    Theme {
+        name: "meltdown",
+        accent: rgb(0xff, 0x00, 0xcc),
+        accent2: rgb(0x00, 0xff, 0xcc),
+        dir: rgb(0x2a, 0xd1, 0x4f),
+        media: rgb(0xb9, 0xff, 0xc8),
+        dim: rgb(0x2f, 0x7d, 0x44),
+        scope: rgb(0x33, 0xff, 0x88),
+        wave: rgb(0x1f, 0x9d, 0x3a),
+        playing: rgb(0x66, 0xff, 0xaa),
+        bg_sel: rgb(0x05, 0x1a, 0x10),
+        effect: &crate::effects::MELTDOWN,
+    },
+    Theme {
         name: "electric",
         accent: rgb(0x00, 0xea, 0xff),
         accent2: rgb(0x7d, 0xf9, 0xff),
@@ -396,6 +423,43 @@ pub struct Settings {
     pub session_loop: Option<String>,
     /// Absolute path of the tree-cursor selection at exit.
     pub session_cursor: Option<String>,
+
+    /// Per-theme knob overrides, keyed by theme name. Only configurable themes
+    /// (glitch family) appear here; absent knobs fall back to the effect default.
+    pub theme_tuning: Option<HashMap<String, TuningCfg>>,
+}
+
+/// Serialized knob overrides for one theme. Each field is optional so partially
+/// tuned themes still round-trip and new knobs stay backward-compatible.
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+pub struct TuningCfg {
+    pub intensity: Option<f32>,
+    pub persistence: Option<f32>,
+    pub disruption: Option<f32>,
+}
+
+impl TuningCfg {
+    /// Overlay any set fields onto a live `Tuning`.
+    pub fn apply(&self, t: &mut Tuning) {
+        if let Some(v) = self.intensity {
+            t.intensity = v;
+        }
+        if let Some(v) = self.persistence {
+            t.persistence = v;
+        }
+        if let Some(v) = self.disruption {
+            t.disruption = v;
+        }
+    }
+
+    /// Snapshot a live `Tuning` for persistence.
+    pub fn from(t: &Tuning) -> Self {
+        Self {
+            intensity: Some(t.intensity),
+            persistence: Some(t.persistence),
+            disruption: Some(t.disruption),
+        }
+    }
 }
 
 fn settings_path() -> Option<PathBuf> {

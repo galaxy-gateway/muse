@@ -1,6 +1,7 @@
 //! Centered overlay modals: the help sheet and the theme picker.
 
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Padding, Paragraph};
@@ -14,6 +15,11 @@ use crate::config::THEMES;
 /// live-previewed in the rest of the UI. Navigated with j/k, applied with Enter.
 pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     let t = &app.theme;
+    let knobs = THEMES[app.theme_sel].effect.knobs();
+    let configurable = !knobs.is_empty();
+    // The modal keeps its original footprint; when the highlighted theme is
+    // configurable the knob panel is docked *inside* it on the right (the list
+    // squishes to fit) so the options are always visible. Tab moves focus there.
     let area = centered(46, 80, f.area());
     f.render_widget(Clear, area);
     let items: Vec<ListItem> = THEMES
@@ -35,12 +41,39 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
             ]))
         })
         .collect();
+    // Dock the knob editor as a right-hand column within the same area; the list
+    // keeps the left. Only when it can't reasonably fit do we drop it.
+    let editor_w = (area.width * 2 / 5).clamp(16, 26);
+    let show_editor = configurable && area.width >= editor_w + 20;
+    let (list_area, editor_area) = if show_editor {
+        (
+            Rect {
+                width: area.width - editor_w,
+                ..area
+            },
+            Rect {
+                x: area.x + area.width - editor_w,
+                width: editor_w,
+                ..area
+            },
+        )
+    } else {
+        (area, Rect::default())
+    };
+
+    let list_hint = if !configurable {
+        "↑↓ pick · ⏎ apply · esc cancel"
+    } else if app.theme_config {
+        "↑↓ pick · tab back"
+    } else {
+        "↑↓ pick · tab tune · ⏎ · esc"
+    };
     let list = List::new(items)
         .block(
             panel_hint(
                 "theme",
                 border(t, app.frame, t.accent2, 0.14),
-                "↑↓ pick · ⏎ apply · esc cancel",
+                list_hint,
                 t.dim,
             )
             .padding(Padding::horizontal(1)),
@@ -49,7 +82,78 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
         .highlight_symbol("▌");
     let mut state = ListState::default();
     state.select(Some(app.theme_sel));
-    f.render_stateful_widget(list, area, &mut state);
+    f.render_stateful_widget(list, list_area, &mut state);
+
+    if show_editor {
+        draw_theme_editor(f, app, editor_area, knobs);
+    }
+}
+
+/// The knob-editor column (docked right of the theme list): one labelled bar
+/// per tunable knob, live values.
+fn draw_theme_editor(f: &mut Frame, app: &App, area: Rect, knobs: &[crate::effects::Knob]) {
+    let t = &app.theme;
+    let tuning = app.tunings[app.theme_sel];
+    let focused = app.theme_config;
+    // Stacked layout (label line, then a bar+value line) so it fits the narrow
+    // column without overflowing the modal's unchanged footprint. The bar fills
+    // whatever width remains after a 2-space indent and the value readout.
+    let inner = area.width.saturating_sub(4) as usize; // borders + horizontal padding
+    let cells = inner.saturating_sub(2 + 5).clamp(3, 16); // indent + " 0.00"
+    let bar_col = if focused { t.scope } else { t.dim };
+    let mut lines: Vec<Line> = vec![Line::from("")];
+    for (i, k) in knobs.iter().enumerate() {
+        let v = tuning.get(*k);
+        let sel = focused && i == app.config_sel;
+        let marker = if sel { "▌" } else { " " };
+        let label_col = if sel {
+            t.accent
+        } else if focused {
+            t.media
+        } else {
+            t.dim
+        };
+        let filled = (v * cells as f32).round() as usize;
+        let bar: String = "█".repeat(filled) + &"░".repeat(cells - filled);
+        lines.push(Line::from(Span::styled(
+            format!("{marker}{}", k.label()),
+            Style::default().fg(label_col),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {bar}"), Style::default().fg(bar_col)),
+            Span::styled(format!(" {v:.2}"), Style::default().fg(t.dim)),
+        ]));
+        lines.push(Line::from(""));
+    }
+    // Trailing "reset to default" row — selectable, resets on Enter.
+    let reset_sel = focused && app.config_sel == knobs.len();
+    let (reset_marker, reset_col) = if reset_sel {
+        ("▌", t.accent)
+    } else if focused {
+        (" ", t.media)
+    } else {
+        (" ", t.dim)
+    };
+    let reset_label = if reset_sel {
+        "↩ reset to default  ⏎"
+    } else {
+        "↩ reset to default"
+    };
+    lines.push(Line::from(Span::styled(
+        format!("{reset_marker}{reset_label}"),
+        Style::default().fg(reset_col),
+    )));
+    let hint = if focused {
+        "↑↓ ←→ · esc back"
+    } else {
+        "tab to tune"
+    };
+    let accent = if focused { t.accent } else { t.dim };
+    let p = Paragraph::new(lines).block(
+        panel_hint("tune", border(t, app.frame, accent, 0.5), hint, t.dim)
+            .padding(Padding::horizontal(1)),
+    );
+    f.render_widget(p, area);
 }
 
 /// Queue manager: the ordered play queue with the now-playing track marked.
@@ -141,6 +245,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &App) {
             "  t                theme picker — {} (saved)",
             t.name
         )),
+        Line::from("  tab (in picker)  tune glitch themes — intensity / etc."),
         Line::from("  /                fuzzy find (⏎ apply · esc reset)"),
         Line::from("  ? then q / esc   open / close this help"),
         Line::from("  q                quit"),

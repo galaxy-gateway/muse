@@ -225,6 +225,8 @@ impl App {
         self.show_theme = true;
         self.theme_prev = self.theme_idx;
         self.theme_sel = self.theme_idx;
+        self.theme_config = false;
+        self.config_sel = 0;
     }
 
     /// Move the highlight (wrapping) and live-preview that theme.
@@ -247,6 +249,7 @@ impl App {
     fn theme_confirm(&mut self) {
         self.apply_preview();
         self.show_theme = false;
+        self.theme_config = false;
         self.persist();
     }
 
@@ -254,6 +257,56 @@ impl App {
         self.theme_idx = self.theme_prev;
         self.theme = THEMES[self.theme_idx];
         self.show_theme = false;
+        self.theme_config = false;
+        // Knob edits are applied + saved live, so they are intentionally kept.
+    }
+
+    /// Knobs exposed by the currently highlighted theme (empty = not configurable).
+    fn sel_knobs(&self) -> &'static [crate::effects::Knob] {
+        THEMES[self.theme_sel].effect.knobs()
+    }
+
+    /// Nudge the highlighted knob of the highlighted theme. Changes are live and
+    /// saved immediately (no separate apply step).
+    fn config_adjust(&mut self, delta: f32) {
+        let knobs = self.sel_knobs();
+        let Some(&k) = knobs.get(self.config_sel) else {
+            return; // on the "reset" row — nothing to nudge
+        };
+        let cur = self.tunings[self.theme_sel].get(k);
+        self.tunings[self.theme_sel].set(k, cur + delta);
+        self.persist();
+    }
+
+    /// Restore the highlighted theme's knobs to the effect's defaults (saved).
+    fn reset_tuning(&mut self) {
+        self.tunings[self.theme_sel] = THEMES[self.theme_sel].effect.default_tuning();
+        self.persist();
+    }
+
+    /// Knob-editor sub-mode keys (active while `theme_config`). The list is the
+    /// knobs plus a trailing "reset to default" row.
+    fn config_key(&mut self, key: KeyEvent) {
+        let n = self.sel_knobs().len();
+        if n == 0 {
+            self.theme_config = false;
+            return;
+        }
+        let rows = n + 1; // knobs + reset row
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.config_sel = (self.config_sel + 1) % rows,
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.config_sel = (self.config_sel + rows - 1) % rows
+            }
+            KeyCode::Char('h') | KeyCode::Left => self.config_adjust(-0.05),
+            KeyCode::Char('l') | KeyCode::Right => self.config_adjust(0.05),
+            // Enter on the reset row restores defaults; on a knob it confirms/closes.
+            KeyCode::Enter if self.config_sel == n => self.reset_tuning(),
+            KeyCode::Enter => self.theme_confirm(),
+            // Esc leaves the editor back to the theme list (not the whole picker).
+            KeyCode::Esc => self.theme_config = false,
+            _ => {}
+        }
     }
 
     /// Queue-manager modal keys: navigate, reorder, remove, play, save, close.
@@ -275,6 +328,18 @@ impl App {
     }
 
     fn theme_key(&mut self, key: KeyEvent) {
+        // Tab toggles the knob editor, but only for configurable themes.
+        if key.code == KeyCode::Tab {
+            if !self.sel_knobs().is_empty() {
+                self.theme_config = !self.theme_config;
+                self.config_sel = 0;
+            }
+            return;
+        }
+        if self.theme_config {
+            self.config_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.theme_move(1),
             KeyCode::Char('k') | KeyCode::Up => self.theme_move(-1),

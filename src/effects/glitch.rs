@@ -9,7 +9,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
-use super::{FrameCtx, ThemeEffect};
+use super::{FrameCtx, Knob, ThemeEffect, Tuning};
 use crate::color::scale;
 use crate::particles::ParticleSim;
 use crate::util::noise;
@@ -26,6 +26,18 @@ const MAGENTA: Color = Color::Rgb(0xff, 0x00, 0xcc);
 pub struct Glitch;
 
 impl ThemeEffect for Glitch {
+    fn knobs(&self) -> &'static [Knob] {
+        &[Knob::Intensity, Knob::Disruption]
+    }
+
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            intensity: 0.65,
+            persistence: 0.0,
+            disruption: 0.55,
+        }
+    }
+
     fn border(&self, base: Color, frame: u64, offset: f64) -> Color {
         // The border has no audio signal here (fixed trait signature), so keep
         // it tasteful: mostly a slowly breathing green with rare RGB micro-jumps
@@ -56,6 +68,10 @@ impl ThemeEffect for Glitch {
         }
         // Remap the active range to 0..1 so intensity ramps from the gate up.
         let hit = ((beat - GATE) / (1.0 - GATE)).clamp(0.0, 1.0);
+        // Tuning: `intensity` scales how many tears fire; `disruption` scales how
+        // far rows are shoved (turn it down for subtle, up for chaos).
+        let intensity = ctx.tuning.intensity;
+        let disruption = ctx.tuning.disruption;
 
         let frame = ctx.frame as u32;
         let buf = f.buffer_mut();
@@ -63,22 +79,22 @@ impl ThemeEffect for Glitch {
         // --- Beat tears: horizontal datamosh. On a hit, grab single rows and
         // shove them sideways with a chromatic tint. Count + displacement scale
         // with the pulse, so they snap in on hits and vanish between them. ---
-        let tears = 1 + (hit * 4.0).round() as u32;
+        let tears = 1 + (hit * 6.0 * intensity).round() as u32;
         for b in 0..tears {
             let seed = noise(frame ^ b.wrapping_mul(2_654_435_761), b * 31 + 7);
             let y = area.y + (seed % h) as u16;
-            let shift = 1 + (seed / 7 % (2 + (hit * 6.0) as u32)) as usize;
+            let shift = 1 + (seed / 7 % (1 + (hit * 8.0 * disruption) as u32).max(1)) as usize;
             tear_row(buf, area, y, shift, seed & 1 == 0, tint_for(seed));
         }
 
         // --- Thick tear band: on a strong hit, a chunk of adjacent rows all
         // slide together by the same offset, like a slab of the screen ripping
         // sideways. Stays in the horizontal-glitch language, no scattered noise. ---
-        if beat > 0.6 {
+        if beat > 0.6 && intensity > 0.05 {
             let seed = noise(frame, 0xB347);
-            let bh = 2 + (hit * 4.0) as u16;
+            let bh = 2 + (hit * 4.0 * intensity) as u16;
             let y0 = area.y + (seed % h.saturating_sub(bh as u32).max(1)) as u16;
-            let shift = 2 + (seed / 5 % (3 + (hit * 8.0) as u32)) as usize;
+            let shift = 2 + (seed / 5 % (1 + (hit * 10.0 * disruption) as u32).max(1)) as usize;
             let right = seed & 2 == 0;
             let tint = tint_for(seed);
             for dy in 0..bh {

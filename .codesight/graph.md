@@ -11,17 +11,17 @@
 - `src/app/shuffle.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
+- `src/effects/datamosh.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
 - `src/effects/flag.rs` — imported by **1** files
 - `src/effects/flame.rs` — imported by **1** files
 - `src/effects/glitch.rs` — imported by **1** files
 - `src/effects/matrix.rs` — imported by **1** files
+- `src/effects/meltdown.rs` — imported by **1** files
 - `src/effects/rave.rs` — imported by **1** files
 - `src/effects/sakura.rs` — imported by **1** files
 - `src/effects/snow.rs` — imported by **1** files
 - `src/effects/starfield.rs` — imported by **1** files
-- `src/app.rs` — imported by **1** files
-- `src/archive.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -34,4 +34,4 @@
 - `src/app/shuffle.rs` ← `src/app/mod.rs`
 - `src/effects/basic.rs` ← `src/effects/mod.rs`
 - `src/effects/bubbles.rs` ← `src/effects/mod.rs`
-- `src/effects/electric.rs` ← `src/effects/mod.rs`
+- `src/effects/datamosh.rs` ← `src/effects/mod.rs`

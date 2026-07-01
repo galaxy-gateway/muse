@@ -15,15 +15,67 @@ use crate::util::noise;
 
 mod basic;
 mod bubbles;
+mod datamosh;
 mod electric;
 mod flag;
 mod flame;
 mod glitch;
 mod matrix;
+mod meltdown;
 mod rave;
 mod sakura;
 mod snow;
 mod starfield;
+
+/// One user-tunable knob on a configurable theme. Every knob is a 0..1 float so
+/// the theme modal can edit them all with one generic bar widget.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Knob {
+    /// Overall amount / frequency of glitching.
+    Intensity,
+    /// Trail length — how long corruption lingers before healing (meltdown).
+    Persistence,
+    /// How much the effect displaces the *real* UI (drag distance, roll). The
+    /// "makes it hard to read" knob — turn it down for a calmer look.
+    Disruption,
+}
+
+impl Knob {
+    pub fn label(self) -> &'static str {
+        match self {
+            Knob::Intensity => "intensity",
+            Knob::Persistence => "persistence",
+            Knob::Disruption => "disruption",
+        }
+    }
+}
+
+/// A configurable theme's live knob values. Non-configurable themes ignore it.
+#[derive(Clone, Copy)]
+pub struct Tuning {
+    pub intensity: f32,
+    pub persistence: f32,
+    pub disruption: f32,
+}
+
+impl Tuning {
+    pub fn get(self, k: Knob) -> f32 {
+        match k {
+            Knob::Intensity => self.intensity,
+            Knob::Persistence => self.persistence,
+            Knob::Disruption => self.disruption,
+        }
+    }
+
+    pub fn set(&mut self, k: Knob, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        match k {
+            Knob::Intensity => self.intensity = v,
+            Knob::Persistence => self.persistence = v,
+            Knob::Disruption => self.disruption = v,
+        }
+    }
+}
 
 /// Per-frame geometry + playback snapshot handed to effects. Owned/Copy so it
 /// can be built once and passed around without borrowing `App`.
@@ -41,6 +93,10 @@ pub struct FrameCtx {
     pub scope_peak: f32,
     /// Beat onset pulse, 0..1: spikes on a beat, decays over a few frames.
     pub beat: f32,
+    /// Per-band onset pulses `[bass, mid, treble]`, each 0..1.
+    pub beat_bands: [f32; 3],
+    /// The active theme's user-tuned knob values.
+    pub tuning: Tuning,
     /// Selection's visible row within the tree's inner area (sel - scroll), if any.
     pub cursor_row: Option<u16>,
     /// Absolute selected list index — seeds nav-burst RNG so the scatter pattern
@@ -56,6 +112,22 @@ pub trait ThemeEffect: Sync {
     /// Whether this theme animates at all (drives the picker's `✦` tag).
     fn is_animated(&self) -> bool {
         true
+    }
+
+    /// User-editable knobs for this theme (empty = not configurable). Order is
+    /// the order shown in the theme modal.
+    fn knobs(&self) -> &'static [Knob] {
+        &[]
+    }
+
+    /// Starting knob values, used until the user overrides them. Only meaningful
+    /// for themes that expose `knobs`.
+    fn default_tuning(&self) -> Tuning {
+        Tuning {
+            intensity: 0.7,
+            persistence: 0.5,
+            disruption: 0.6,
+        }
     }
 
     /// Border accent for a panel: the theme's static `base`, or an animated
@@ -183,6 +255,8 @@ pub static SNOW: snow::Snow = snow::Snow;
 pub static FLAME: flame::Flame = flame::Flame;
 pub static FLAG: flag::Flag = flag::Flag;
 pub static GLITCH: glitch::Glitch = glitch::Glitch;
+pub static DATAMOSH: datamosh::Datamosh = datamosh::Datamosh;
+pub static MELTDOWN: meltdown::Meltdown = meltdown::Meltdown;
 pub static ELECTRIC: electric::Electric = electric::Electric;
 pub static MATRIX: matrix::Matrix = matrix::Matrix;
 pub static BUBBLES: bubbles::Bubbles = bubbles::Bubbles;
