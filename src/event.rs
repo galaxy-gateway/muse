@@ -2,6 +2,8 @@
 //! to a single crossbeam channel the UI thread drains.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -105,14 +107,21 @@ pub fn spawn_input(tx: Sender<AppEvent>) {
     });
 }
 
-/// ~60Hz tick to drive the live scope + playhead.
-pub fn spawn_ticks(tx: Sender<AppEvent>) {
+/// ~60Hz tick to drive the live scope + playhead. Sleeps adaptively: 200ms when idle,
+/// 16ms otherwise. Input events flow through their own reader thread so keypresses
+/// still wake the UI instantly.
+pub fn spawn_ticks(tx: Sender<AppEvent>, idle_flag: Arc<AtomicBool>) {
     thread::spawn(move || {
         loop {
             if tx.send(AppEvent::Tick).is_err() {
                 break;
             }
-            thread::sleep(Duration::from_millis(16));
+            let sleep_ms = if idle_flag.load(Ordering::Relaxed) {
+                200
+            } else {
+                16
+            };
+            thread::sleep(Duration::from_millis(sleep_ms));
         }
     });
 }

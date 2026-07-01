@@ -74,7 +74,7 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
     spawn_input(tx.clone());
-    spawn_ticks(tx.clone());
+    spawn_ticks(tx.clone(), app.idle_flag.clone());
     spawn_index(dir.clone(), tx.clone());
     // Fill in each top-level dir's recursive stats off-thread so the tree
     // populates progressively behind the already-visible UI.
@@ -147,18 +147,34 @@ fn run(
 ) -> Result<()> {
     terminal.draw(|f| ui::draw(f, app))?;
     let mut last_draw = Instant::now();
+    let mut last_mouse_draw = Instant::now();
     let min_frame = Duration::from_millis(16);
 
     while let Ok(ev) = rx.recv() {
         let is_tick = matches!(ev, AppEvent::Tick);
+        let is_mouse_move =
+            matches!(ev, AppEvent::Mouse(m) if m.kind == crossterm::event::MouseEventKind::Moved);
         app.handle(ev);
         if app.should_quit {
             break;
         }
-        // Coalesce ticks: redraw at most ~60fps; always redraw on non-tick events.
-        if !is_tick || last_draw.elapsed() >= min_frame {
+        // Only redraw on non-tick events, or ticks when not idle, or if needs_settle.
+        let should_draw = if is_tick {
+            !app.idle && last_draw.elapsed() >= min_frame
+        } else if is_mouse_move {
+            // Rate-limit pure mouse move events to ~60fps.
+            last_mouse_draw.elapsed() >= min_frame
+        } else {
+            // Non-tick, non-move events always redraw immediately.
+            true
+        };
+        if should_draw || app.needs_settle {
             terminal.draw(|f| ui::draw(f, app))?;
             last_draw = Instant::now();
+            if is_mouse_move {
+                last_mouse_draw = Instant::now();
+            }
+            app.needs_settle = false;
         }
     }
     Ok(())

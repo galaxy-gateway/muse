@@ -34,9 +34,24 @@ pub struct TreeModel {
     pub nodes: Vec<Node>,
     pub root: NodeId,
     pub visible: Vec<NodeId>,
+    /// Free slot indices for node reuse (LIFO stack).
+    free: Vec<NodeId>,
 }
 
 impl TreeModel {
+    /// Allocate a node slot, reusing a freed slot if available, else pushing a new one.
+    /// Returns the index.
+    fn allocate_node(&mut self, node: Node) -> NodeId {
+        if let Some(slot) = self.free.pop() {
+            self.nodes[slot] = node;
+            slot
+        } else {
+            let id = self.nodes.len();
+            self.nodes.push(node);
+            id
+        }
+    }
+
     pub fn new(root: &Path, reg: &Registry) -> Self {
         let name = root
             .file_name()
@@ -60,6 +75,7 @@ impl TreeModel {
             nodes: vec![root_node],
             root: 0,
             visible: Vec::new(),
+            free: Vec::new(),
         };
         // Shallow scan only: read the root's immediate children (one `read_dir`,
         // no recursion) so the UI appears instantly. The recursive per-dir stats
@@ -176,8 +192,7 @@ impl TreeModel {
             } else {
                 (0, false)
             };
-            let nid = self.nodes.len();
-            self.nodes.push(Node {
+            let nid = self.allocate_node(Node {
                 path,
                 name,
                 is_dir: expandable,
@@ -219,8 +234,7 @@ impl TreeModel {
                 let depth = base_depth + i + 1;
                 if i + 1 == comps.len() {
                     // media leaf — virtual path = archive joined with the entry
-                    let nid = self.nodes.len();
-                    self.nodes.push(Node {
+                    let nid = self.allocate_node(Node {
                         path: archive.join(&e.inner),
                         name: (*comp).to_string(),
                         is_dir: false,
@@ -244,8 +258,7 @@ impl TreeModel {
                     if let Some(&did) = dir_ids.get(&prefix) {
                         parent = did;
                     } else {
-                        let nid = self.nodes.len();
-                        self.nodes.push(Node {
+                        let nid = self.allocate_node(Node {
                             path: archive.join(&prefix),
                             name: (*comp).to_string(),
                             is_dir: true,
@@ -372,5 +385,42 @@ impl TreeModel {
 
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id]
+    }
+
+    /// Release all descendants of `id` and return them to the free list. The node
+    /// `id` itself is NOT released; its `children` and `expanded` are cleared.
+    /// Called after a large subtree is collapsed, or when closing an archive.
+    pub fn release_subtree(&mut self, id: NodeId) {
+        let mut stack = Vec::new();
+        if let Some(children) = self.nodes[id].children.take() {
+            for &child in &children {
+                stack.push(child);
+            }
+        }
+        self.nodes[id].expanded = false;
+
+        while let Some(node_id) = stack.pop() {
+            if let Some(children) = self.nodes[node_id].children.take() {
+                for &child in &children {
+                    stack.push(child);
+                }
+            }
+            // Reset the node to a placeholder.
+            self.nodes[node_id] = Node {
+                path: PathBuf::new(),
+                name: String::new(),
+                is_dir: false,
+                is_archive: false,
+                is_media: false,
+                depth: 0,
+                parent: None,
+                children: None,
+                expanded: false,
+                size: 0,
+                count: 0,
+                pending: false,
+            };
+            self.free.push(node_id);
+        }
     }
 }

@@ -5,7 +5,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, List, ListItem, ListState, Padding, Paragraph, Wrap,
+};
 
 use super::widgets::{border, panel, spinner};
 use crate::app::App;
@@ -77,12 +79,46 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
             item
         }
     };
+
+    // Only the rows actually on screen get a ListItem built for them — with
+    // 20k+ visible nodes this is the difference between a few dozen allocations
+    // and tens of thousands, every frame at 60Hz. `offset` is computed here and
+    // written back to `app.list_state` (the source of truth) so mouse
+    // hit-testing (`tree_row_at`) and the beat-pulse cursor, which both read
+    // `list_state.offset()`, keep seeing the real absolute scroll position.
+    let total_len = if filtering {
+        app.filtered.len()
+    } else {
+        app.tree.visible.len()
+    };
+    let inner_h = area.height.saturating_sub(2) as usize; // minus top+bottom border
+    let selected = app
+        .list_state
+        .selected()
+        .map(|s| s.min(total_len.saturating_sub(1)));
+    let mut offset = app.list_state.offset().min(total_len.saturating_sub(1));
+    if let Some(sel) = selected {
+        if sel < offset {
+            offset = sel;
+        } else if inner_h > 0 && sel >= offset + inner_h {
+            offset = sel + 1 - inner_h;
+        }
+    }
+    offset = if inner_h > 0 && total_len > inner_h {
+        offset.min(total_len - inner_h)
+    } else {
+        0
+    };
+    *app.list_state.offset_mut() = offset;
+
     let items: Vec<ListItem> = if filtering {
         // Flat fuzzy results: relative paths to matching media files.
         let root = app.root_path();
         app.filtered
             .iter()
             .enumerate()
+            .skip(offset)
+            .take(inner_h)
             .map(|(idx, p)| {
                 let rel = p
                     .strip_prefix(&root)
@@ -113,6 +149,8 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
             .visible
             .iter()
             .enumerate()
+            .skip(offset)
+            .take(inner_h)
             .map(|(idx, &id)| {
                 let n = app.tree.node(id);
                 let indent = "  ".repeat(n.depth.saturating_sub(1));
@@ -187,7 +225,13 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▌");
-    f.render_stateful_widget(list, area, &mut app.list_state);
+    // Items passed in are already the windowed slice, so render with a fresh
+    // ListState (offset 0, selection rebased into the window) — otherwise
+    // ratatui would re-window an already-windowed list. `app.list_state`
+    // remains the real source of truth for scroll position and selection.
+    let mut render_state = ListState::default();
+    render_state.select(selected.map(|s| s.saturating_sub(offset)));
+    f.render_stateful_widget(list, area, &mut render_state);
 }
 
 pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {

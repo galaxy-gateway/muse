@@ -53,7 +53,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // The active theme's effect paints any overlay (particles, sprites, glitch).
     let ctx = app.frame_ctx();
-    app.theme.effect.overlay(f, &app.sim, &ctx);
+    // When paused and particles are empty, decimate overlay (skip 3 of 4 frames).
+    let skip_effect = !app.engine.is_playing()
+        && app.sim.is_empty()
+        && app.theme.effect.is_animated()
+        && !app.frame.is_multiple_of(4);
+    if !skip_effect {
+        app.theme.effect.overlay(f, &app.sim, &ctx);
+    }
     draw_hover_seek(f, app);
 
     // Render crisp cover thumbnails out-of-band over the cells the panels

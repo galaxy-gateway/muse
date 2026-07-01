@@ -18,6 +18,10 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::media::Registry;
 
+/// Decompressed entry bytes kept in memory across the app; prevents a 1.7GB zip
+/// from caching all 1.7GB forever. LRU eviction on archive browse.
+const ARCHIVE_BYTES_CAP: usize = 256 * 1024 * 1024;
+
 /// One file inside an archive (audio entries only, after filtering).
 #[derive(Clone)]
 pub struct ArchiveEntry {
@@ -85,12 +89,15 @@ struct Store {
     index: HashMap<PathBuf, Arc<Vec<ArchiveEntry>>>,
     /// Decompressed entry bytes per (archive, inner) — the heavy memory.
     bytes: HashMap<(PathBuf, String), Arc<Vec<u8>>>,
+    /// LRU insertion order for `bytes` (oldest first), for bounded eviction.
+    bytes_order: Vec<(PathBuf, String)>,
 }
 
 static STORE: LazyLock<Mutex<Store>> = LazyLock::new(|| {
     Mutex::new(Store {
         index: HashMap::new(),
         bytes: HashMap::new(),
+        bytes_order: Vec::new(),
     })
 });
 
@@ -114,12 +121,56 @@ pub fn list_audio(archive: &Path) -> Arc<Vec<ArchiveEntry>> {
 /// Decompressed bytes for one entry, cached in memory. `None` on error.
 pub fn read(archive: &Path, inner: &str) -> Option<Arc<Vec<u8>>> {
     let key = (archive.to_path_buf(), inner.to_string());
-    if let Some(b) = STORE.lock().unwrap().bytes.get(&key) {
-        return Some(b.clone());
+
+    // Check cache and touch LRU on hit.
+    {
+        let mut store = STORE.lock().unwrap();
+        if let Some(b) = store.bytes.get(&key) {
+            let result = b.clone();
+            // Move to back (most recently used).
+            if let Some(pos) = store.bytes_order.iter().position(|k| k == &key) {
+                store.bytes_order.remove(pos);
+                store.bytes_order.push(key.clone());
+            }
+            return Some(result);
+        }
     }
+
+    // Not cached; decompress (lock released during decompression).
     let data = read_entry(archive, inner)?;
     let arc = Arc::new(data);
-    STORE.lock().unwrap().bytes.insert(key, arc.clone());
+
+    // Re-check and insert with LRU eviction (prevent duplicate insertion race).
+    {
+        let mut store = STORE.lock().unwrap();
+
+        // Another thread may have inserted this entry while we decompressed.
+        if let Some(b) = store.bytes.get(&key) {
+            return Some(b.clone());
+        }
+
+        // Insert our decompressed copy.
+        store.bytes.insert(key.clone(), arc.clone());
+        store.bytes_order.push(key.clone());
+
+        // Evict oldest entries if total size exceeds cap.
+        loop {
+            let total_size: usize = store
+                .bytes_order
+                .iter()
+                .filter_map(|k| store.bytes.get(k).map(|v| v.len()))
+                .sum();
+
+            if total_size <= ARCHIVE_BYTES_CAP || store.bytes_order.len() <= 1 {
+                break;
+            }
+
+            // Remove the oldest entry (front of order).
+            let oldest_key = store.bytes_order.remove(0);
+            store.bytes.remove(&oldest_key);
+        }
+    }
+
     Some(arc)
 }
 
@@ -130,6 +181,7 @@ pub fn close(archive: &Path) {
     let mut s = STORE.lock().unwrap();
     s.index.remove(archive);
     s.bytes.retain(|(p, _), _| p != archive);
+    s.bytes_order.retain(|(p, _)| p != archive);
 }
 
 // --- per-format listing ---------------------------------------------------

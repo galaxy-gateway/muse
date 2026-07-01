@@ -13,6 +13,9 @@ mod shuffle;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 use crossbeam_channel::Sender;
@@ -80,6 +83,10 @@ impl LoopMode {
     }
 }
 
+/// Single-slot condvar mailbox the debounced Tick arm hands a (path, generation
+/// token) job to; the persistent waveform worker thread blocks on it.
+type WaveJob = Arc<(Mutex<Option<(PathBuf, u64)>>, std::sync::Condvar)>;
+
 pub struct App {
     pub tree: TreeModel,
     pub registry: Registry,
@@ -91,6 +98,8 @@ pub struct App {
     pub list_state: ListState,
 
     pub meta_cache: HashMap<PathBuf, Meta>,
+    /// LRU insertion order for `meta_cache` (oldest first), for bounded eviction.
+    pub(super) meta_order: Vec<PathBuf>,
     /// Persistent on-disk tag cache (path+size+mtime keyed); backs `meta_cache`
     /// so re-launches skip re-parsing unchanged files.
     pub(super) meta_disk: crate::metacache::MetaCache,
@@ -99,6 +108,12 @@ pub struct App {
     pub(super) wave_order: Vec<PathBuf>,
     pub wave_pending: Option<PathBuf>,
     pub wave_gen: u64,
+    /// Debouncing for browse waveform requests: (path, when set). On-selection-changed
+    /// just writes this; Tick arm fires after 150ms idle to a persistent worker.
+    pub(super) wave_want: Option<(PathBuf, Instant)>,
+    /// Debouncing for browse art requests: (path, when set). On-selection-changed
+    /// just writes this; Tick arm fires after 150ms idle to a persistent worker.
+    pub(super) art_want: Option<(PathBuf, Instant)>,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -210,12 +225,25 @@ pub struct App {
     pub(super) dir_cache: crate::dircache::DirCache,
     pub should_quit: bool,
 
+    /// True when not playing, theme doesn't animate, and no particles are active.
+    pub(crate) idle: bool,
+    /// Draw once more after idle becomes true, then gate redraws until an event.
+    pub(crate) needs_settle: bool,
+
     /// OS media-key integration (now-playing controls). `None` if unavailable.
     pub(super) media: Option<MediaControls>,
     /// Last play-state pushed to the OS, to avoid redundant updates.
     pub(super) media_playing: bool,
 
     pub(super) tx: Sender<AppEvent>,
+    /// Single-slot mailbox for browse waveform requests: (path, token).
+    /// Written by Tick arm after debounce, read by persistent waveform worker.
+    pub(super) wave_job: WaveJob,
+    /// Single-slot mailbox for browse art requests: path.
+    /// Written by Tick arm after debounce, read by persistent art worker.
+    pub(super) art_job: Arc<(Mutex<Option<PathBuf>>, std::sync::Condvar)>,
+    /// Shared idle flag with tick thread, to adapt sleep duration.
+    pub(super) idle_flag: Arc<AtomicBool>,
 }
 
 impl App {
@@ -263,6 +291,7 @@ impl App {
                 tn
             })
             .collect();
+        let idle_flag = Arc::new(AtomicBool::new(false));
         let mut app = Self {
             tree,
             registry,
@@ -272,11 +301,14 @@ impl App {
             frame: 0,
             list_state,
             meta_cache: HashMap::new(),
+            meta_order: Vec::new(),
             meta_disk: crate::metacache::MetaCache::load(),
             wave_cache: HashMap::new(),
             wave_order: Vec::new(),
             wave_pending: None,
             wave_gen: 0,
+            wave_want: None,
+            art_want: None,
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -338,8 +370,54 @@ impl App {
             media: init_media(&tx),
             media_playing: false,
             should_quit: false,
-            tx,
+            idle: false,
+            needs_settle: false,
+            tx: tx.clone(),
+            wave_job: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            art_job: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            idle_flag: idle_flag.clone(),
         };
+
+        // Spawn persistent waveform worker thread.
+        let wave_job = app.wave_job.clone();
+        let wave_tx = app.tx.clone();
+        thread::spawn(move || {
+            const WAVE_BINS: usize = 1600;
+            loop {
+                let (path, token) = {
+                    let mut job = wave_job.0.lock().unwrap();
+                    while job.is_none() {
+                        job = wave_job.1.wait(job).unwrap();
+                    }
+                    job.take().unwrap()
+                };
+                let bins = crate::audio::waveform_envelope(&path, WAVE_BINS)
+                    .or_else(|| crate::audio::waveform_bins(&path, WAVE_BINS).ok());
+                if let Some(bins) = bins {
+                    let _ = wave_tx.send(AppEvent::Wave(path, token, bins));
+                }
+            }
+        });
+
+        // Spawn persistent art worker thread.
+        let art_job = app.art_job.clone();
+        let art_tx = app.tx.clone();
+        thread::spawn(move || {
+            loop {
+                let path = {
+                    let mut job = art_job.0.lock().unwrap();
+                    while job.is_none() {
+                        job = art_job.1.wait(job).unwrap();
+                    }
+                    job.take().unwrap()
+                };
+                let art = crate::media::cover_art_bytes(&path)
+                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
+                    .map(|img| img.thumbnail(512, 512).to_rgb8());
+                let _ = art_tx.send(AppEvent::Art(path, art));
+            }
+        });
+
         app.on_selection_changed();
         app.restore_session(&settings);
         Ok(app)
@@ -672,11 +750,60 @@ impl App {
                 self.check_track_end();
                 self.sync_media_playback();
                 self.sync_stream_waveform();
+                // Check debounced browse waveform request (150ms idle).
+                if let Some((path, since)) = self.wave_want.take() {
+                    if since.elapsed().as_millis() >= 150
+                        && !self.wave_cache.contains_key(&path)
+                        && self.wave_pending.as_ref() != Some(&path)
+                    {
+                        self.wave_gen += 1;
+                        let token = self.wave_gen;
+                        self.wave_pending = Some(path.clone());
+                        if let Ok(mut job) = self.wave_job.0.lock() {
+                            *job = Some((path, token));
+                            self.wave_job.1.notify_one();
+                        }
+                    } else if since.elapsed().as_millis() < 150 {
+                        // Still in debounce window, re-queue it.
+                        self.wave_want = Some((path, since));
+                    }
+                }
+                // Check debounced browse art request (150ms idle).
+                if let Some((path, since)) = self.art_want.take() {
+                    if since.elapsed().as_millis() >= 150
+                        && !self.wave_art.contains_key(&path)
+                        && self.art_pending.as_ref() != Some(&path)
+                    {
+                        self.art_pending = Some(path.clone());
+                        if let Ok(mut job) = self.art_job.0.lock() {
+                            *job = Some(path);
+                            self.art_job.1.notify_one();
+                        }
+                    } else if since.elapsed().as_millis() < 150 {
+                        // Still in debounce window, re-queue it.
+                        self.art_want = Some((path, since));
+                    }
+                }
                 let ctx = self.frame_ctx();
                 let fx = self.theme.effect;
-                fx.ambient(&mut self.sim, &ctx);
+                // When paused and particles are empty, decimate effects (skip 3 of 4 frames).
+                let skip_effect = !self.engine.is_playing()
+                    && self.sim.is_empty()
+                    && fx.is_animated()
+                    && !self.frame.is_multiple_of(4);
+                if !skip_effect {
+                    fx.ambient(&mut self.sim, &ctx);
+                }
                 let wind = fx.wind(&ctx);
                 self.sim.update(ctx.screen, wind);
+                // Compute idle state: not playing, theme is not animated, no particles.
+                let prev_idle = self.idle;
+                self.idle = !self.engine.is_playing() && !fx.is_animated() && self.sim.is_empty();
+                self.idle_flag.store(self.idle, Ordering::Relaxed);
+                if !prev_idle && self.idle {
+                    // Just became idle; draw once more to settle the final frame.
+                    self.needs_settle = true;
+                }
                 self.frame = self.frame.wrapping_add(1);
             }
             AppEvent::Wave(path, _token, bins) => {
@@ -786,7 +913,7 @@ impl App {
 }
 
 /// Move (or add) `path` to the back of an LRU order list (most-recently-used).
-fn touch_lru(order: &mut Vec<PathBuf>, path: &Path) {
+pub(super) fn touch_lru(order: &mut Vec<PathBuf>, path: &Path) {
     if let Some(i) = order.iter().position(|p| p == path) {
         order.remove(i);
     }
@@ -795,7 +922,7 @@ fn touch_lru(order: &mut Vec<PathBuf>, path: &Path) {
 
 /// Evict the oldest entries from `map` (tracked by `order`) down to `cap`, never
 /// dropping a `keep` path (now-playing / selection).
-fn evict_lru<V>(
+pub(super) fn evict_lru<V>(
     map: &mut HashMap<PathBuf, V>,
     order: &mut Vec<PathBuf>,
     cap: usize,

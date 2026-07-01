@@ -12,6 +12,22 @@ use crate::model::NodeId;
 const WAVE_BINS: usize = 1600;
 
 impl App {
+    /// Count all descendants of `id` (children, grandchildren, etc.).
+    /// Used to decide whether to free a collapsed subtree.
+    fn count_descendants(&self, id: NodeId) -> usize {
+        let mut stack = vec![id];
+        let mut count = 0;
+        while let Some(node_id) = stack.pop() {
+            if let Some(children) = &self.tree.node(node_id).children {
+                for &child in children {
+                    count += 1;
+                    stack.push(child);
+                }
+            }
+        }
+        count
+    }
+
     /// Expand a directory progressively: read its immediate children instantly
     /// (a single `read_dir`, no recursive stat walk), apply cached stats where
     /// fresh, and background-scan the rest. So expanding a huge folder shows its
@@ -74,6 +90,11 @@ impl App {
         if node.is_dir && node.expanded {
             self.close_archive_if_any(id);
             self.tree.nodes[id].expanded = false;
+            // Release large subtrees to prevent unbounded memory growth.
+            let desc_count = self.count_descendants(id);
+            if desc_count > 2000 {
+                self.tree.release_subtree(id);
+            }
             self.refilter_keep();
         } else if let Some(parent) = node.parent {
             if parent != self.tree.root {
@@ -102,6 +123,13 @@ impl App {
                 self.expand_dir(id);
             }
             self.tree.nodes[id].expanded = !expanded;
+            // Release large subtrees when collapsing to prevent unbounded memory growth.
+            if expanded {
+                let desc_count = self.count_descendants(id);
+                if desc_count > 2000 {
+                    self.tree.release_subtree(id);
+                }
+            }
             self.refilter_keep();
         } else if node.is_media {
             let path = node.path.clone();
@@ -113,12 +141,13 @@ impl App {
     }
 
     /// If `id` is an archive node being collapsed, wipe its decompressed bytes
-    /// from memory and drop its built subtree so re-expanding re-lists fresh.
+    /// from memory and release its built subtree so re-expanding re-lists fresh.
     fn close_archive_if_any(&mut self, id: NodeId) {
         if self.tree.node(id).is_archive {
             let path = self.tree.node(id).path.clone();
             crate::archive::close(&path);
-            self.tree.nodes[id].children = None;
+            // Release the archive's subtree to the free list (not just drop it).
+            self.tree.release_subtree(id);
         }
     }
 
@@ -134,7 +163,7 @@ impl App {
         self.on_selection_changed();
     }
 
-    /// Lazy-load metadata + kick off a waveform compute for the selected media.
+    /// Lazy-load metadata + queue a debounced waveform compute for the selected media.
     pub(super) fn on_selection_changed(&mut self) {
         let Some(path) = self.cursor_path() else {
             return;
@@ -143,24 +172,34 @@ impl App {
             return;
         }
         self.ensure_meta(&path);
-        self.request_art(path.clone());
+        // Queue art request with debounce (write the want, Tick will fire it after 150ms idle).
+        if !self.wave_art.contains_key(&path) && self.art_pending.as_ref() != Some(&path) {
+            self.art_want = Some((path.clone(), std::time::Instant::now()));
+        }
+        // Queue waveform request with debounce (write the want, Tick will fire it after 150ms idle).
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
-            self.request_waveform(path);
+            self.wave_want = Some((path, std::time::Instant::now()));
         }
     }
 
     /// Make sure `meta_cache` holds tags for `path`, sourcing them from the
     /// persistent disk cache (validated by size+mtime) when possible and only
-    /// re-parsing the file on a cache miss.
+    /// re-parsing the file on a cache miss. Touch LRU order for eviction.
     pub(super) fn ensure_meta(&mut self, path: &std::path::Path) {
-        if self.meta_cache.contains_key(path) || !self.registry.is_supported(path) {
+        let path_buf = path.to_path_buf();
+        if self.meta_cache.contains_key(&path_buf) || !self.registry.is_supported(path) {
+            // Touch the LRU order even on cache hit.
+            super::touch_lru(&mut self.meta_order, &path_buf);
+            self.evict_meta();
             return;
         }
         let stamp = crate::metacache::file_stamp(path);
         if let Some((size, mtime)) = stamp
             && let Some(meta) = self.meta_disk.get(path, size, mtime)
         {
-            self.meta_cache.insert(path.to_path_buf(), meta.clone());
+            self.meta_cache.insert(path_buf.clone(), meta.clone());
+            super::touch_lru(&mut self.meta_order, &path_buf);
+            self.evict_meta();
             return;
         }
         let Some(provider) = self.registry.for_path(path) else {
@@ -170,7 +209,9 @@ impl App {
         if let Some((size, mtime)) = stamp {
             self.meta_disk.put(path, size, mtime, meta.clone());
         }
-        self.meta_cache.insert(path.to_path_buf(), meta);
+        self.meta_cache.insert(path_buf.clone(), meta);
+        super::touch_lru(&mut self.meta_order, &path_buf);
+        self.evict_meta();
     }
 
     pub(super) fn request_waveform(&mut self, path: PathBuf) {
@@ -205,5 +246,11 @@ impl App {
                 });
             let _ = tx.send(AppEvent::Art(path, art));
         });
+    }
+
+    fn evict_meta(&mut self) {
+        const META_CAP: usize = 4096;
+        let keep = self.keep_paths();
+        super::evict_lru(&mut self.meta_cache, &mut self.meta_order, META_CAP, &keep);
     }
 }

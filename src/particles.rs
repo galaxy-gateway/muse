@@ -103,4 +103,9 @@ impl ParticleSim {
             p.x >= 0.0 && p.x < w && p.y >= 0.0 && p.y < h && p.age < p.life
         });
     }
+
+    /// Whether the particle pool is empty.
+    pub fn is_empty(&self) -> bool {
+        self.sparks.is_empty()
+    }
 }
