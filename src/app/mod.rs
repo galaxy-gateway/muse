@@ -197,6 +197,10 @@ pub struct App {
     pub theme_config: bool,
     /// Highlighted knob within the editor.
     pub config_sel: usize,
+    /// Startup tree-scan progress: top-level entries scanned / total. While
+    /// `scan_done < scan_total` a progress bar shows and the tree is filling in.
+    pub scan_done: usize,
+    pub scan_total: usize,
     pub should_quit: bool,
 
     /// OS media-key integration (now-playing controls). `None` if unavailable.
@@ -211,6 +215,9 @@ impl App {
     pub fn new(root: &Path, tx: Sender<AppEvent>) -> anyhow::Result<Self> {
         let registry = Registry::new();
         let tree = TreeModel::new(root, &registry);
+        // Every top-level dir/archive starts `pending`; the background stats
+        // worker (spawned from `main`) fills them in and this counts down.
+        let scan_total = tree.pending_paths().len();
         let engine = AudioEngine::new()?;
         let spectrum = SpectrumState::new(engine.sample_rate());
         let mut list_state = ListState::default();
@@ -308,6 +315,8 @@ impl App {
             tunings,
             theme_config: false,
             config_sel: 0,
+            scan_done: 0,
+            scan_total,
             media: init_media(&tx),
             media_playing: false,
             should_quit: false,
@@ -491,6 +500,12 @@ impl App {
         self.tree.node(self.tree.root).path.clone()
     }
 
+    /// Whether the background top-level scan is still in progress (drives the
+    /// startup progress bar).
+    pub fn scanning(&self) -> bool {
+        self.scan_total > 0 && self.scan_done < self.scan_total
+    }
+
     /// Whether `p` lives inside the current root directory. Compares canonical
     /// forms so a relative launch dir or symlinks still match; falls back to a
     /// plain prefix check when either path can't be canonicalized.
@@ -609,7 +624,47 @@ impl App {
                     self.rebuild_filtered();
                 }
             }
+            AppEvent::DirStats {
+                path,
+                count,
+                size,
+                scanned,
+                total,
+            } => {
+                self.scan_done = scanned;
+                self.scan_total = total;
+                // Only a stats result that hides a dir (count 0) changes the
+                // visible list; apply + re-flatten, keeping the cursor on the
+                // same item where possible.
+                let sel_path = self.cursor_path();
+                if self.tree.apply_stats(&path, count, size) {
+                    self.tree.rebuild_visible();
+                    self.reselect_after_scan(sel_path);
+                }
+            }
         }
+    }
+
+    /// After the visible list is rebuilt (a music-less dir was pruned), keep the
+    /// cursor on the same path if it still exists, else clamp into range.
+    fn reselect_after_scan(&mut self, prev: Option<PathBuf>) {
+        if self.filter_active() {
+            return;
+        }
+        let len = self.tree.visible.len();
+        if len == 0 {
+            self.list_state.select(None);
+            return;
+        }
+        let idx = prev
+            .and_then(|p| {
+                self.tree
+                    .visible
+                    .iter()
+                    .position(|&id| self.tree.node(id).path == p)
+            })
+            .unwrap_or_else(|| self.list_state.selected().unwrap_or(0).min(len - 1));
+        self.list_state.select(Some(idx));
     }
 
     /// Snapshot the per-frame geometry + playback state the active theme effect

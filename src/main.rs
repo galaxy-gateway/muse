@@ -31,7 +31,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::app::App;
-use crate::event::{AppEvent, spawn_index, spawn_input, spawn_ticks};
+use crate::event::{AppEvent, spawn_dir_stats, spawn_index, spawn_input, spawn_ticks};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -75,6 +75,9 @@ fn main() -> Result<()> {
     spawn_input(tx.clone());
     spawn_ticks(tx.clone());
     spawn_index(dir.clone(), tx.clone());
+    // Fill in each top-level dir's recursive stats off-thread so the tree
+    // populates progressively behind the already-visible UI.
+    spawn_dir_stats(app.tree.pending_paths(), tx.clone());
 
     let res = run(&mut terminal, &mut app, rx);
 

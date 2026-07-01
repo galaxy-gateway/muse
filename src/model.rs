@@ -24,6 +24,10 @@ pub struct Node {
     pub size: u64,
     /// For dirs: count of media files within (recursive). 0 for files.
     pub count: usize,
+    /// An expandable node whose recursive stats (`count`/`size`) are still being
+    /// computed in the background. Kept visible (unpruned) until they arrive, so
+    /// the tree populates progressively at startup instead of blocking.
+    pub pending: bool,
 }
 
 pub struct TreeModel {
@@ -50,20 +54,62 @@ impl TreeModel {
             expanded: true,
             size: 0,
             count: 0,
+            pending: false,
         };
         let mut model = Self {
             nodes: vec![root_node],
             root: 0,
             visible: Vec::new(),
         };
-        model.scan(0, reg);
+        // Shallow scan only: read the root's immediate children (one `read_dir`,
+        // no recursion) so the UI appears instantly. The recursive per-dir stats
+        // (and pruning of music-less dirs) stream in later via `apply_stats`.
+        model.scan_shallow(0, reg);
         model.rebuild_visible();
         model
     }
 
+    /// Read a directory's immediate children **without** recursive stats — dirs
+    /// and archives become `pending` nodes, pruned/counted later off-thread.
+    pub fn scan_shallow(&mut self, id: NodeId, reg: &Registry) {
+        self.scan_inner(id, reg, true);
+    }
+
+    /// Paths of every still-`pending` node — the work list handed to the
+    /// background stats worker.
+    pub fn pending_paths(&self) -> Vec<PathBuf> {
+        self.nodes
+            .iter()
+            .filter(|n| n.pending)
+            .map(|n| n.path.clone())
+            .collect()
+    }
+
+    /// Apply a background stats result to the matching node: record its recursive
+    /// `count`/`size` and clear `pending` (so a music-less dir is now pruned by
+    /// `rebuild_visible`). Returns whether a node matched.
+    pub fn apply_stats(&mut self, path: &Path, count: usize, size: u64) -> bool {
+        if let Some(n) = self.nodes.iter_mut().find(|n| n.pending && n.path == path) {
+            n.count = count;
+            n.size = size;
+            n.pending = false;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Read a directory's immediate children (once). Dirs first, then files, A→Z.
-    /// An archive container is scanned from its in-memory listing instead.
+    /// An archive container is scanned from its in-memory listing instead. This
+    /// computes recursive stats and prunes music-less dirs (used on expand).
     pub fn scan(&mut self, id: NodeId, reg: &Registry) {
+        self.scan_inner(id, reg, false);
+    }
+
+    /// `shallow` skips the recursive per-dir stats (and pruning): every dir /
+    /// archive child becomes a `pending` node whose `count`/`size` are filled in
+    /// later. Non-shallow computes stats inline and prunes music-less entries.
+    fn scan_inner(&mut self, id: NodeId, reg: &Registry, shallow: bool) {
         if self.nodes[id].children.is_some() || !self.nodes[id].is_dir {
             return;
         }
@@ -106,26 +152,30 @@ impl TreeModel {
                 .unwrap_or_default();
             let is_arch = !is_dir && crate::archive::is_archive(&path);
             let is_media = !is_dir && !is_arch && reg.is_supported(&path);
-            // Recursive media stats: a dir (or archive) with no music inside is hidden.
-            let count = if is_dir {
+            // Archives expand like dirs (is_dir), scanned lazily from memory.
+            let expandable = is_dir || is_arch;
+            // Recursive media stats: a dir (or archive) with no music inside is
+            // hidden. In shallow mode this is deferred — the node is marked
+            // `pending` and shown until the background stats arrive.
+            let (count, pending) = if shallow {
+                (0, expandable)
+            } else if is_dir {
                 let (c, s) = Self::dir_stats(&path, reg);
                 if c == 0 {
                     continue; // prune music-less directories
                 }
                 size = s;
-                c
+                (c, false)
             } else if is_arch {
                 let entries = crate::archive::list_audio(&path);
                 if entries.is_empty() {
                     continue; // archive holds no audio → hide it
                 }
                 size = entries.iter().map(|e| e.size).sum();
-                entries.len()
+                (entries.len(), false)
             } else {
-                0
+                (0, false)
             };
-            // Archives expand like dirs (is_dir), scanned lazily from memory.
-            let expandable = is_dir || is_arch;
             let nid = self.nodes.len();
             self.nodes.push(Node {
                 path,
@@ -139,6 +189,7 @@ impl TreeModel {
                 expanded: false,
                 size,
                 count,
+                pending,
             });
             kids.push(nid);
         }
@@ -181,6 +232,7 @@ impl TreeModel {
                         expanded: false,
                         size: e.size,
                         count: 0,
+                        pending: false,
                     });
                     kids_of.entry(parent).or_default().push(nid);
                 } else {
@@ -205,6 +257,7 @@ impl TreeModel {
                             expanded: true, // pre-expanded: the whole subtree is known
                             size: 0,
                             count: 0,
+                            pending: false,
                         });
                         dir_ids.insert(prefix.clone(), nid);
                         kids_of.entry(parent).or_default().push(nid);
@@ -258,7 +311,7 @@ impl TreeModel {
     /// Count all supported media files within `dir` (recursive) and sum their
     /// sizes. Used both to display per-dir totals and to prune dirs holding no
     /// music anywhere below them.
-    fn dir_stats(dir: &Path, reg: &Registry) -> (usize, u64) {
+    pub(crate) fn dir_stats(dir: &Path, reg: &Registry) -> (usize, u64) {
         let mut count = 0;
         let mut size = 0;
         if let Ok(rd) = std::fs::read_dir(dir) {
@@ -301,8 +354,13 @@ impl TreeModel {
     }
 
     fn push_visible(&self, id: NodeId, out: &mut Vec<NodeId>) {
-        out.push(id);
         let node = &self.nodes[id];
+        // Hide an expandable node once its stats are in and it holds no music
+        // (deferred pruning). While `pending`, it stays visible.
+        if node.is_dir && !node.pending && node.count == 0 {
+            return;
+        }
+        out.push(id);
         if node.is_dir && node.expanded {
             if let Some(children) = &node.children {
                 for &c in children {

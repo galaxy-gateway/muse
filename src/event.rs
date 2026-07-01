@@ -17,6 +17,15 @@ pub enum AppEvent {
     Art(PathBuf, Option<image::RgbImage>),
     /// Full recursive media-file index for fuzzy filtering (built off-thread).
     Index(Vec<PathBuf>),
+    /// Recursive media stats for one top-level entry, streamed as the background
+    /// scan progresses. `scanned`/`total` drive the startup progress bar.
+    DirStats {
+        path: PathBuf,
+        count: usize,
+        size: u64,
+        scanned: usize,
+        total: usize,
+    },
     /// OS media-key / now-playing control event (souvlaki).
     Media(souvlaki::MediaControlEvent),
 }
@@ -38,6 +47,37 @@ pub fn spawn_index(root: PathBuf, tx: Sender<AppEvent>) {
             }
         }
         let _ = tx.send(AppEvent::Index(files));
+    });
+}
+
+/// Compute recursive media stats for each top-level entry off-thread and stream
+/// them back, so the tree fills in (and prunes music-less dirs) progressively
+/// after the UI is already up. Order matches `paths`; each message carries the
+/// running `scanned`/`total` for the progress bar.
+pub fn spawn_dir_stats(paths: Vec<PathBuf>, tx: Sender<AppEvent>) {
+    thread::spawn(move || {
+        let reg = crate::media::Registry::new();
+        let total = paths.len();
+        for (i, path) in paths.into_iter().enumerate() {
+            let (count, size) = if crate::archive::is_archive(&path) {
+                let entries = crate::archive::list_audio(&path);
+                (entries.len(), entries.iter().map(|e| e.size).sum())
+            } else {
+                crate::model::TreeModel::dir_stats(&path, &reg)
+            };
+            if tx
+                .send(AppEvent::DirStats {
+                    path,
+                    count,
+                    size,
+                    scanned: i + 1,
+                    total,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
     });
 }
 

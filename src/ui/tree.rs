@@ -44,7 +44,9 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
             Style::default().fg(bc).add_modifier(Modifier::BOLD),
         ))
     };
-    let hint = if filtering {
+    let hint = if app.scanning() && !filtering {
+        scan_hint(app, t.accent2, t.dim)
+    } else if filtering {
         Line::from(vec![
             Span::styled(
                 " esc ",
@@ -126,7 +128,9 @@ pub(super) fn draw_tree(f: &mut Frame, app: &mut App, area: Rect) {
                 if playing {
                     style = style.add_modifier(Modifier::BOLD);
                 }
-                let meta = if n.is_dir {
+                let meta = if n.is_dir && n.pending {
+                    "  …".to_string() // recursive stats still being counted
+                } else if n.is_dir {
                     let items = format!("{} track{}", n.count, if n.count == 1 { "" } else { "s" });
                     if n.size > 0 {
                         format!("  {items} · {}", fmt_size(n.size))
@@ -250,6 +254,40 @@ pub(super) fn draw_selection(f: &mut Frame, app: &App, area: Rect) {
 
     // Copy-path button on the selection title row (first inner row).
     super::inspector::draw_copy_button(f, app, app.sel_copy_btn_rect(), app.sel_copy_flashing());
+}
+
+/// Tongue-in-cheek status lines shown while the library scan runs.
+const SCAN_QUIPS: [&str; 8] = [
+    "rummaging through your questionable taste",
+    "counting the bangers",
+    "bribing the filesystem",
+    "alphabetizing the chaos",
+    "waking the hamsters",
+    "judging your folder names",
+    "summoning the beats",
+    "untangling the headphones",
+];
+
+/// Startup scan progress for the tree's bottom border: a spinner + rotating quip
+/// + a text progress bar + `done/total`.
+fn scan_hint(app: &App, accent: Color, dim: Color) -> Line<'static> {
+    const SPINNER: [char; 4] = ['⠋', '⠙', '⠹', '⠸'];
+    let (done, total) = (app.scan_done, app.scan_total.max(1));
+    let ratio = (done as f64 / total as f64).clamp(0.0, 1.0);
+    const CELLS: usize = 8;
+    let filled = (ratio * CELLS as f64).round() as usize;
+    let bar: String = "█".repeat(filled) + &"░".repeat(CELLS - filled);
+    // Advance the spinner + quip off the redraw counter (~60Hz).
+    let spin = SPINNER[(app.frame / 8) as usize % SPINNER.len()];
+    let quip = SCAN_QUIPS[(app.frame / 90) as usize % SCAN_QUIPS.len()];
+    Line::from(vec![
+        Span::styled(
+            format!(" {spin} {quip} "),
+            Style::default().fg(dim).add_modifier(Modifier::ITALIC),
+        ),
+        Span::styled(format!("[{bar}] "), Style::default().fg(accent)),
+        Span::styled(format!("{done}/{total} "), Style::default().fg(dim)),
+    ])
 }
 
 /// Lighten a color by adding `d` to each channel (for the hover row tint).
