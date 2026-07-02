@@ -80,16 +80,30 @@ impl App {
         // since auto-advance may reach a track the cursor never selected.
         self.ensure_meta(&path);
         self.push_media_metadata();
-        // Kick the cheap up-front waveform (packet-size envelope). Until it lands,
-        // `sync_stream_waveform` shows the progressive decode fill as a stopgap.
+        // Queue the cheap up-front waveform + cover art through the same
+        // debounced single-worker slots browsing uses. A held `n`/`p` then does
+        // no decode work per press — only the track that survives the debounce
+        // computes; `sync_stream_waveform` shows the progressive decode fill as
+        // a stopgap until the envelope lands.
         if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
-            self.request_waveform(path.clone());
+            self.wave_want = Some((path.clone(), std::time::Instant::now()));
         }
-        self.request_art(path);
+        if !self.wave_art.contains_key(&path) && self.art_pending.as_ref() != Some(&path) {
+            self.art_want = Some((path, std::time::Instant::now()));
+        }
         // Maintain the shuffle bag (drop the now-playing track, refill if dry).
         self.shuffle_after_play();
-        // Decode the track auto-advance will play next, so its boundary is gapless.
-        self.preload_next();
+        // Decode the track auto-advance will play next, so its boundary is
+        // gapless. Debounced: rapid switching would otherwise spawn (and cancel)
+        // one prefetch decoder per keypress.
+        self.queue_preload();
+    }
+
+    /// Ask for the gapless prefetch after now-playing has been stable for a
+    /// moment (the Tick arm fires it). The prediction is computed at fire time,
+    /// so intervening switches or mode toggles are folded into one request.
+    pub(super) fn queue_preload(&mut self) {
+        self.preload_want = Some(std::time::Instant::now());
     }
 
     /// Predict the next track (per loop mode + current view list) and ask the

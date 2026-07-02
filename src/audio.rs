@@ -57,6 +57,16 @@ impl DecodedAudio {
 const WINDOW_AHEAD_SECS: u64 = 30;
 const WINDOW_BEHIND_SECS: u64 = 15;
 
+/// Decode lookahead for a stream that hasn't really been listened to yet.
+/// Expanded to `WINDOW_AHEAD_SECS` only once ~0.5s has actually played, so a
+/// track that is immediately switched away from again (held `n`/`p`, rapid
+/// clicking) allocates ~1MB instead of a full 30s window per press — the churn
+/// of full windows is what ballooned RSS during rapid cycling (freed, but
+/// cached dirty by the allocator for a long while). Preloads idle at this small
+/// window too; decode outruns playback by ~50-100x, so the post-adoption
+/// expansion never risks an underrun.
+const WARMUP_AHEAD_SECS: u64 = 3;
+
 /// A track decoded *incrementally* into a bounded sliding window. The decoder
 /// keeps only [`playhead - BEHIND` .. `playhead + AHEAD`] resident; playback
 /// reads from it by absolute frame. A fully-decoded (gapless-preloaded) track is
@@ -234,6 +244,10 @@ impl StreamResampler {
     }
 }
 
+/// Gate serializing full-decode fallbacks (see `stream_decode`): at most one
+/// whole-file decode may be resident at a time, process-wide.
+static FALLBACK_GATE: Mutex<()> = Mutex::new(());
+
 /// Background entry: decode `path` into `sb` incrementally, filling `wave` with
 /// peaks, starting at `seek_frames` (device frames; 0 = from the top). Streams via
 /// symphonia when possible; if that can't even start (unsupported / needs ffmpeg),
@@ -252,31 +266,48 @@ fn stream_decode(
     }))
     .unwrap_or_else(|_| Err(anyhow!("decoder panicked")));
     // Full-decode fallback only for the initial play (not a seek). The fallback
-    // is a single blocking, *uncancellable* decode of the whole file — running it
-    // per seek on a large track (and it can't honor the seek anyway) is how rapid
+    // is a single blocking decode of the whole file — running it per seek on a
+    // large track (and it can't honor the seek anyway) is how rapid
     // waveform-clicking piled up into an out-of-memory crash.
     if streamed.is_err() && seek_frames == 0 && sb.ready_abs.load(Ordering::Relaxed) == 0 {
-        // Retry once: a decode can fail transiently, and a track that decodes to
-        // nothing would otherwise just fail to play.
-        for attempt in 0..2 {
+        // Serialize fallbacks process-wide: each one holds an entire decoded
+        // track resident at its peak, so rapid track cycling must never stack
+        // them. Waiting is cancel-aware — a superseded track gives up its turn.
+        let gate = loop {
             if sb.cancel.load(Ordering::Relaxed) {
-                break;
+                break None;
             }
-            match load_track_safe(path, device_sr) {
-                Ok(d) if !sb.cancel.load(Ordering::Relaxed) => {
-                    // Fallback can't honor a mid-file seek — it decodes from the top.
-                    // It's a full buffer, so never trim (u64::MAX lookbehind).
-                    let total = d.frames() as u64;
-                    sb.base.store(0, Ordering::Relaxed);
-                    sb.total.store(total, Ordering::Relaxed);
-                    wave.total.store(total, Ordering::Relaxed);
-                    wave.add(&d.samples, 0);
-                    sb.push(&d.samples, u64::MAX);
+            match FALLBACK_GATE.try_lock() {
+                Ok(g) => break Some(g),
+                Err(std::sync::TryLockError::Poisoned(p)) => break Some(p.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    thread::sleep(Duration::from_millis(10))
+                }
+            }
+        };
+        if gate.is_some() {
+            // Retry once: a decode can fail transiently, and a track that decodes
+            // to nothing would otherwise just fail to play.
+            for attempt in 0..2 {
+                if sb.cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                _ => {
-                    if attempt == 0 {
-                        thread::sleep(Duration::from_millis(20));
+                match load_track_safe(path, device_sr, &sb.cancel) {
+                    Ok(d) if !sb.cancel.load(Ordering::Relaxed) => {
+                        // Fallback can't honor a mid-file seek — it decodes from the top.
+                        // It's a full buffer, so never trim (u64::MAX lookbehind).
+                        let total = d.frames() as u64;
+                        sb.base.store(0, Ordering::Relaxed);
+                        sb.total.store(total, Ordering::Relaxed);
+                        wave.total.store(total, Ordering::Relaxed);
+                        wave.add(&d.samples, 0);
+                        sb.push(&d.samples, u64::MAX);
+                        break;
+                    }
+                    _ => {
+                        if attempt == 0 {
+                            thread::sleep(Duration::from_millis(20));
+                        }
                     }
                 }
             }
@@ -370,23 +401,32 @@ fn stream_symphonia(
         decoder.reset();
     }
 
-    let lookahead = device_sr as u64 * WINDOW_AHEAD_SECS;
+    let full_ahead = device_sr as u64 * WINDOW_AHEAD_SECS;
+    let warm_ahead = device_sr as u64 * WARMUP_AHEAD_SECS;
+    // The playhead crossing half a second past where this stream started is
+    // proof the track is actually being listened to — until then, hold the
+    // small warmup window (see WARMUP_AHEAD_SECS).
+    let warmed_at = sb.play_head.load(Ordering::Relaxed) + device_sr as u64 / 2;
     let lookbehind = device_sr as u64 * WINDOW_BEHIND_SECS;
     let mut resamp = StreamResampler::new(sr, device_sr);
     let mut native: Vec<f32> = Vec::new();
     let mut out: Vec<f32> = Vec::new();
     let mut sbuf: Option<SampleBuffer<f32>> = None;
     loop {
-        if sb.cancel.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-        // Throttle: don't decode more than `lookahead` ahead of the playhead, so
+        // Throttle: don't decode more than the lookahead past the playhead, so
         // the resident window stays bounded regardless of track length.
-        while sb.ready_abs.load(Ordering::Acquire)
-            >= sb.play_head.load(Ordering::Relaxed) + lookahead
-        {
+        loop {
             if sb.cancel.load(Ordering::Relaxed) {
                 return Ok(());
+            }
+            let head = sb.play_head.load(Ordering::Relaxed);
+            let lookahead = if head >= warmed_at {
+                full_ahead
+            } else {
+                warm_ahead
+            };
+            if sb.ready_abs.load(Ordering::Acquire) < head + lookahead {
+                break;
             }
             thread::sleep(Duration::from_millis(5));
         }
@@ -610,21 +650,19 @@ impl AudioEngine {
         let (load_tx, load_rx) = unbounded::<PathBuf>();
         let (loaded_tx, loaded_rx) = unbounded::<(PathBuf, Arc<StreamBuf>, Arc<WaveShared>)>();
         thread::spawn(move || {
-            let mut inflight: Option<Arc<StreamBuf>> = None;
             while let Ok(mut path) = load_rx.recv() {
                 // Collapse to the most recent request; older predictions are stale.
                 while let Ok(p) = load_rx.try_recv() {
                     path = p;
                 }
-                // Stop the previous prediction's decoder — it's been superseded.
-                if let Some(old) = inflight.take() {
-                    old.cancel.store(true, Ordering::Relaxed);
-                }
                 let sb = StreamBuf::empty(0);
                 let wave = WaveShared::new();
-                inflight = Some(sb.clone());
                 // Hand off the live handle immediately — don't wait for any
                 // decoding to happen; the decode thread adopts it in place.
+                // The decode thread owns cancellation from here on: it cancels
+                // superseded handles as it drains them. Cancelling here (as
+                // this thread used to on the next request) could kill a stream
+                // the decode thread had already adopted as the CURRENT track.
                 let _ = loaded_tx.send((path.clone(), sb.clone(), wave.clone()));
                 thread::spawn(move || stream_decode(&path, device_sr, sb, wave, 0));
             }
@@ -813,9 +851,13 @@ fn decode_loop(
     let mut trim_countdown: u32 = 0;
 
     loop {
-        // Pick up any finished preload (keep only the most recent).
+        // Pick up any inflight preload handle, keeping only the most recent and
+        // stopping the decoder of each one it supersedes (this loop is the sole
+        // owner of preload cancellation — see the loader thread above).
         while let Ok(item) = loaded_rx.try_recv() {
-            preloaded = Some(item);
+            if let Some((_, old, _)) = preloaded.replace(item) {
+                old.cancel.store(true, Ordering::Relaxed);
+            }
         }
         // Drain all pending commands into a batch. Coalescing here is what keeps
         // rapid song-switching responsive: only the LAST Open actually spawns a
@@ -853,24 +895,29 @@ fn decode_loop(
                     // Flush the previous track's buffered tail so the switch is
                     // immediate (no stale audio plays out first).
                     flush_gen.fetch_add(1, Ordering::Relaxed);
-                    match preloaded.take() {
+                    // Adopt the preloaded stream only when it's for this exact
+                    // path. A mismatched leftover is NOT stale garbage — it is
+                    // usually the prefetch for the track that will follow this
+                    // one (`play_path` sends `Open`, then predicts and preloads
+                    // the next), so keep it alive for the upcoming gapless
+                    // boundary instead of killing it.
+                    let adopted = match &preloaded {
+                        Some((p, _, _)) if *p == path => preloaded.take(),
+                        _ => None,
+                    };
+                    match adopted {
                         // Prefetched (gapless): adopt the already-running stream
                         // handle directly — its throttle has kept up to
                         // WINDOW_AHEAD_SECS decoded and idling, plenty of runway,
                         // and its waveform is already filling in.
-                        Some((p, sb, w)) if p == path => {
+                        Some((_, sb, w)) => {
                             dur_frames.store(sb.total.load(Ordering::Relaxed), Ordering::Relaxed);
                             audio = Some(sb);
                             wave = Some(w.clone());
                             *bins_slot.lock().unwrap() = Some(w);
                             playing.store(true, Ordering::Relaxed);
                         }
-                        other => {
-                            // Any leftover preload was for a different path —
-                            // it's no longer needed, stop its decoder.
-                            if let Some((_, sb, _)) = other {
-                                sb.cancel.store(true, Ordering::Relaxed);
-                            }
+                        None => {
                             // Stream it: play as it decodes, never waiting for the
                             // whole file. The waveform fills in from the same decode.
                             let sb = StreamBuf::empty(0);
@@ -1040,14 +1087,16 @@ fn decode_loop(
 /// then on every `TransportCmd` is dropped silently (the `cmd_tx` receiver is
 /// gone) and playback is dead until the app restarts. Catching it and returning a
 /// normal `Err` leaves a clean stopped state, so the *next* track still plays.
-fn load_track_safe(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load_track(path, device_sr)))
-        .unwrap_or_else(|_| Err(anyhow!("decoder panicked on {}", path.display())))
+fn load_track_safe(path: &Path, device_sr: u32, cancel: &AtomicBool) -> Result<DecodedAudio> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        load_track(path, device_sr, cancel)
+    }))
+    .unwrap_or_else(|_| Err(anyhow!("decoder panicked on {}", path.display())))
 }
 
 /// Decode a file to interleaved stereo at the device sample rate.
-fn load_track(path: &Path, device_sr: u32) -> Result<DecodedAudio> {
-    let (dec, _) = decode_any(path, None)?;
+fn load_track(path: &Path, device_sr: u32, cancel: &AtomicBool) -> Result<DecodedAudio> {
+    let (dec, _) = decode_any(path, None, Some(cancel))?;
     Ok(to_device_rate(dec, device_sr))
 }
 
@@ -1066,32 +1115,55 @@ fn to_device_rate(dec: DecodedAudio, device_sr: u32) -> DecodedAudio {
 
 /// Decode `path` to interleaved stereo at its native rate, transparently
 /// handling both disk files and in-archive virtual paths (bytes from the
-/// in-memory store). symphonia first, ffmpeg as a fallback.
-fn decode_any(path: &Path, limit_secs: Option<f64>) -> Result<(DecodedAudio, Option<u64>)> {
+/// in-memory store). symphonia first, ffmpeg as a fallback. When `cancel` is
+/// set, the decode aborts (with an error) as soon as the flag flips — the
+/// caller has moved on and the result would be thrown away.
+fn decode_any(
+    path: &Path,
+    limit_secs: Option<f64>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(DecodedAudio, Option<u64>)> {
     // ffmpeg has no prefix mode, so its fallback always returns the full track;
     // its total frame count is therefore exact.
     let full = |d: DecodedAudio| {
         let n = d.frames() as u64;
         (d, Some(n))
     };
+    // Don't even launch ffmpeg for a decode that's already been abandoned.
+    let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     if let Some((arc, inner)) = crate::archive::split_virtual(path) {
         let bytes = crate::archive::read(&arc, &inner)
             .ok_or_else(|| anyhow!("archive entry unreadable: {inner}"))?;
         let ext = Path::new(&inner).extension().and_then(|e| e.to_str());
         let src = Box::new(MemSource::new(bytes.clone()));
-        decode_symphonia_source(src, ext, limit_secs)
-            .or_else(|_| decode_ffmpeg_bytes(&bytes).map(full))
+        decode_symphonia_source(src, ext, limit_secs, cancel).or_else(|e| {
+            if cancelled() {
+                Err(e)
+            } else {
+                decode_ffmpeg_bytes(&bytes).map(full)
+            }
+        })
     } else {
-        decode_symphonia(path, limit_secs).or_else(|_| decode_ffmpeg(path).map(full))
+        decode_symphonia(path, limit_secs, cancel).or_else(|e| {
+            if cancelled() {
+                Err(e)
+            } else {
+                decode_ffmpeg(path).map(full)
+            }
+        })
     }
 }
 
-fn decode_symphonia(path: &Path, limit_secs: Option<f64>) -> Result<(DecodedAudio, Option<u64>)> {
+fn decode_symphonia(
+    path: &Path,
+    limit_secs: Option<f64>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(DecodedAudio, Option<u64>)> {
     use symphonia::core::io::MediaSourceStream;
     let file = File::open(path)?;
     let src = MediaSourceStream::new(Box::new(file), Default::default());
     let ext = path.extension().and_then(|e| e.to_str());
-    decode_symphonia_stream(src, ext, limit_secs)
+    decode_symphonia_stream(src, ext, limit_secs, cancel)
 }
 
 /// Decode from any symphonia `MediaSource` (disk file or in-memory bytes).
@@ -1099,10 +1171,11 @@ fn decode_symphonia_source(
     src: Box<dyn symphonia::core::io::MediaSource>,
     ext: Option<&str>,
     limit_secs: Option<f64>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(DecodedAudio, Option<u64>)> {
     use symphonia::core::io::MediaSourceStream;
     let mss = MediaSourceStream::new(src, Default::default());
-    decode_symphonia_stream(mss, ext, limit_secs)
+    decode_symphonia_stream(mss, ext, limit_secs, cancel)
 }
 
 /// Decode a symphonia stream to interleaved stereo at its native rate. When
@@ -1114,6 +1187,7 @@ fn decode_symphonia_stream(
     mss: symphonia::core::io::MediaSourceStream,
     ext: Option<&str>,
     limit_secs: Option<f64>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(DecodedAudio, Option<u64>)> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
@@ -1154,6 +1228,11 @@ fn decode_symphonia_stream(
     let mut out: Vec<f32> = Vec::new();
     let mut sbuf: Option<SampleBuffer<f32>> = None;
     loop {
+        // Abandoned mid-decode (the track was superseded): bail out instead of
+        // finishing a whole-file decode nobody will use.
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(anyhow!("decode cancelled"));
+        }
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(_) => break,
@@ -1434,7 +1513,7 @@ pub fn waveform_bins(path: &Path, n_bins: usize) -> Result<Vec<(f32, f32)>> {
     // track. Only formats that need the ffmpeg fallback (which has no
     // packet-streaming API of its own) fall through to the old full-decode fold.
     waveform_bins_stream(path, n_bins).or_else(|_| {
-        let (dec, _) = decode_any(path, None)?;
+        let (dec, _) = decode_any(path, None, None)?;
         Ok(waveform_bins_fold(&dec.samples, dec.frames(), n_bins))
     })
 }

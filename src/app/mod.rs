@@ -114,6 +114,10 @@ pub struct App {
     /// Debouncing for browse art requests: (path, when set). On-selection-changed
     /// just writes this; Tick arm fires after 150ms idle to a persistent worker.
     pub(super) art_want: Option<(PathBuf, Instant)>,
+    /// Debouncing for the gapless prefetch: when now-playing last changed (or a
+    /// mode toggle re-primed it). The Tick arm calls `preload_next` once this is
+    /// ~400ms old, so a held `n`/`p` never spawns a prefetch decoder per press.
+    pub(super) preload_want: Option<Instant>,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -309,6 +313,7 @@ impl App {
             wave_gen: 0,
             wave_want: None,
             art_want: None,
+            preload_want: None,
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -767,6 +772,15 @@ impl App {
                         // Still in debounce window, re-queue it.
                         self.wave_want = Some((path, since));
                     }
+                }
+                // Fire the debounced gapless prefetch once now-playing has been
+                // stable for 400ms. The prediction is computed here, at fire
+                // time, so a burst of switches folds into a single preload.
+                if let Some(since) = self.preload_want
+                    && since.elapsed().as_millis() >= 400
+                {
+                    self.preload_want = None;
+                    self.preload_next();
                 }
                 // Check debounced browse art request (150ms idle).
                 if let Some((path, since)) = self.art_want.take() {

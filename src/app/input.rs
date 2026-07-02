@@ -77,12 +77,12 @@ impl App {
             (KeyCode::Char('r'), _) => {
                 self.loop_mode = self.loop_mode.next();
                 // The predicted-next track depends on the loop mode.
-                self.preload_next();
+                self.queue_preload();
             }
             (KeyCode::Char('b'), _) => {
                 // Toggle gapless (back-to-back) playback; (un)prime the prefetch.
                 self.gapless = !self.gapless;
-                self.preload_next();
+                self.queue_preload();
                 self.persist();
             }
             (KeyCode::Char('s'), _) => {
@@ -93,7 +93,7 @@ impl App {
                 } else {
                     self.shuffle_bag.clear();
                 }
-                self.preload_next();
+                self.queue_preload();
                 self.persist();
             }
             (KeyCode::Char('y'), _) => self.copy_selection_path(),
