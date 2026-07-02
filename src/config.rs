@@ -409,6 +409,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x1a, 0x18, 0x12),
         effect: &crate::effects::SEISMOGRAPH,
     },
+    Theme {
+        name: "metronome",
+        accent: rgb(0xe8, 0xc8, 0x7a),
+        accent2: rgb(0xb0, 0x98, 0x6a),
+        dir: rgb(0xc0, 0xa8, 0x78),
+        media: rgb(0xe6, 0xde, 0xcc),
+        dim: rgb(0x6a, 0x5c, 0x40),
+        scope: rgb(0xe8, 0xc8, 0x7a),
+        wave: rgb(0x90, 0x7c, 0x54),
+        playing: rgb(0xff, 0xf2, 0xc8),
+        bg_sel: rgb(0x18, 0x14, 0x0c),
+        effect: &crate::effects::METRONOME,
+    },
 ];
 
 impl Default for Theme {

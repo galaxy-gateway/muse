@@ -67,6 +67,9 @@ pub struct TempoTracker {
     confidence: f64,
     /// Cached per-tick outputs.
     phase: f32,
+    /// Phase over a TWO-beat cycle (0..1) — a pendulum's full swing period,
+    /// so alternating left/right beats fall out of one continuous value.
+    phase2: f32,
 }
 
 /// Octave-fold plausible beat periods into this range (secs): ~60-180 BPM.
@@ -85,6 +88,7 @@ impl TempoTracker {
             anchor: 0.0,
             confidence: 0.0,
             phase: 0.0,
+            phase2: 0.0,
         }
     }
 
@@ -132,11 +136,14 @@ impl TempoTracker {
         {
             self.confidence *= 0.985;
         }
-        self.phase = if self.period > 0.0 {
-            (((now - self.anchor) / self.period).rem_euclid(1.0)) as f32
+        if self.period > 0.0 {
+            let beats = (now - self.anchor) / self.period;
+            self.phase = beats.rem_euclid(1.0) as f32;
+            self.phase2 = (beats / 2.0).rem_euclid(1.0) as f32;
         } else {
-            0.0
-        };
+            self.phase = 0.0;
+            self.phase2 = 0.0;
+        }
     }
 
     /// Median-anchored average: estimate the period from intervals within 12%
@@ -168,6 +175,11 @@ impl TempoTracker {
     /// Beat phase 0..1 (0 = on the beat), or `None` until the lock is trusted.
     pub fn phase(&self) -> Option<f32> {
         self.locked().then_some(self.phase)
+    }
+
+    /// Phase over a two-beat cycle (a pendulum's full swing), when locked.
+    pub fn phase2(&self) -> Option<f32> {
+        self.locked().then_some(self.phase2)
     }
 
     /// Estimated tempo, or `None` until the lock is trusted. The octave fold
@@ -276,6 +288,11 @@ impl BeatState {
     /// Locked beat phase 0..1 (0 = on the beat), `None` until trusted.
     pub fn tempo_phase(&self) -> Option<f32> {
         self.tempo.phase()
+    }
+
+    /// Locked two-beat (pendulum swing) phase 0..1, `None` until trusted.
+    pub fn tempo_phase2(&self) -> Option<f32> {
+        self.tempo.phase2()
     }
 
     /// Estimated tempo in BPM, `None` until trusted.

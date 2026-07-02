@@ -28,6 +28,7 @@ mod flame;
 mod glitch;
 mod matrix;
 mod meltdown;
+mod metronome;
 mod plasma;
 mod rave;
 mod sakura;
@@ -179,6 +180,8 @@ pub struct FrameCtx {
     pub wave_rect: Rect,
     /// Now-playing panel (the inspector's top row) — used by the flag overlay.
     pub np_rect: Rect,
+    /// Bottom transport bar — the Metronome's pendulum track.
+    pub transport_rect: Rect,
     pub hover: Option<(u16, u16)>,
     /// Peak abs amplitude of the current scope window.
     pub scope_peak: f32,
@@ -190,6 +193,8 @@ pub struct FrameCtx {
     /// `None` until the tempo tracker trusts its estimate. Lets effects
     /// anticipate beats instead of reacting to them.
     pub tempo_phase: Option<f32>,
+    /// Phase over a two-beat cycle (a pendulum's full swing), when locked.
+    pub tempo_phase2: Option<f32>,
     /// Estimated tempo (BPM) when locked.
     pub bpm: Option<f32>,
     /// The active theme's user-tuned knob values.
@@ -372,3 +377,4 @@ pub static RAVE: rave::Rave = rave::Rave;
 pub static CRT: crt::Crt = crt::Crt;
 pub static TAPE: tape::Tape = tape::Tape;
 pub static SEISMOGRAPH: seismograph::Seismograph = seismograph::Seismograph;
+pub static METRONOME: metronome::Metronome = metronome::Metronome;
