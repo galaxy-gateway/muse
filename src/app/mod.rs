@@ -137,9 +137,16 @@ pub struct App {
     /// so the allocator's freed-but-dirty pages return to the OS promptly.
     pub(super) relief_want: Option<Instant>,
     /// In-flight palette crossfade: (palette we came FROM, start time). While
-    /// set, each tick re-blends `theme`'s colors toward `THEMES[theme_idx]`;
+    /// set, each tick re-blends `theme`'s colors toward `theme_target`;
     /// the effect pointer switches immediately (behaviors can't be blended).
     pub(super) theme_fade: Option<(crate::config::Theme, Instant)>,
+    /// The palette destination: the base theme, or (with `adaptive` on and
+    /// cover art available) the base theme retinted by the art's dominant
+    /// colors. Crossfades land exactly on this.
+    pub(super) theme_target: crate::config::Theme,
+    /// Adaptive palette: retint the active theme from the now-playing track's
+    /// cover art. Toggled with `a` in the theme modal; persisted.
+    pub(super) adaptive: bool,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -341,6 +348,8 @@ impl App {
             last_open_req: None,
             relief_want: None,
             theme_fade: None,
+            theme_target: THEMES[theme_idx],
+            adaptive: settings.adaptive_palette.unwrap_or(false),
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -524,7 +533,8 @@ impl App {
         let p2s = |p: &PathBuf| p.to_string_lossy().into_owned();
         Settings {
             scope_preset: Some(self.scope_preset().name.to_string()),
-            theme: Some(self.theme.name.to_string()),
+            theme: Some(THEMES[self.theme_idx].name.to_string()),
+            adaptive_palette: Some(self.adaptive),
             gapless: Some(self.gapless),
             shuffle: Some(self.shuffle),
             session_track: self.now_playing.as_ref().map(p2s),
@@ -672,13 +682,34 @@ impl App {
     /// The blend starts from whatever palette is currently displayed (so a
     /// switch mid-fade stays continuous); the effect changes immediately.
     pub(super) fn set_theme(&mut self, idx: usize) {
-        if idx == self.theme_idx && self.theme_fade.is_none() {
-            return;
-        }
-        let from = self.theme;
         self.theme_idx = idx;
-        self.theme = blend_theme(&from, &THEMES[idx], 0.0);
-        self.theme_fade = Some((from, Instant::now()));
+        // The effect must switch NOW even though colors glide.
+        self.theme.effect = THEMES[idx].effect;
+        self.refresh_palette();
+    }
+
+    /// Recompute the palette destination (base theme, retinted by the
+    /// now-playing cover art when adaptive is on) and start a crossfade
+    /// toward it if it isn't already where we're headed.
+    pub(super) fn refresh_palette(&mut self) {
+        let base = THEMES[self.theme_idx];
+        let target = if self.adaptive {
+            self.now_playing
+                .as_ref()
+                .and_then(|np| self.wave_art.get(np))
+                .and_then(|art| art.as_ref())
+                .and_then(crate::media::dominant_colors)
+                .map(|(p, s)| retint(&base, p, s))
+                .unwrap_or(base)
+        } else {
+            base
+        };
+        if !pal_eq(&target, &self.theme_target) {
+            let from = self.theme;
+            self.theme_target = target;
+            self.theme = blend_theme(&from, &self.theme_target, 0.0);
+            self.theme_fade = Some((from, Instant::now()));
+        }
     }
 
     /// Advance the palette crossfade one tick (see `theme_fade`).
@@ -687,12 +718,12 @@ impl App {
         if let Some((from, start)) = &self.theme_fade {
             let t = start.elapsed().as_millis() as f64 / FADE_MS;
             if t >= 1.0 {
-                self.theme = THEMES[self.theme_idx];
+                self.theme = self.theme_target;
                 self.theme_fade = None;
             } else {
                 // Smoothstep: ease both ends of the fade.
                 let e = t * t * (3.0 - 2.0 * t);
-                self.theme = blend_theme(from, &THEMES[self.theme_idx], e);
+                self.theme = blend_theme(from, &self.theme_target, e);
             }
         }
     }
@@ -962,6 +993,10 @@ impl App {
                 if self.art_pending.as_ref() == Some(&path) {
                     self.art_pending = None;
                 }
+                // Adaptive palette: the now-playing cover just arrived.
+                if self.adaptive && self.now_playing.as_ref() == Some(&path) {
+                    self.refresh_palette();
+                }
             }
             AppEvent::Index(files) => {
                 self.index = files;
@@ -1052,6 +1087,40 @@ impl App {
             play_frac,
         }
     }
+}
+
+/// Retint a base theme with a cover's dominant colors. Accent-family colors
+/// pull strongly toward the art; body text (`media`) and `dim` stay untouched
+/// for readability; the selection background takes a deep shade of the
+/// primary so the whole UI reads as "this album's colors".
+fn retint(base: &crate::config::Theme, p: (u8, u8, u8), s: (u8, u8, u8)) -> crate::config::Theme {
+    use crate::color::{mix, scale};
+    use ratatui::style::Color;
+    let p = Color::Rgb(p.0, p.1, p.2);
+    let s = Color::Rgb(s.0, s.1, s.2);
+    crate::config::Theme {
+        accent: mix(base.accent, p, 0.7),
+        accent2: mix(base.accent2, s, 0.7),
+        dir: mix(base.dir, s, 0.45),
+        scope: mix(base.scope, p, 0.6),
+        wave: mix(base.wave, s, 0.55),
+        playing: mix(base.playing, scale(p, 1.25), 0.6),
+        bg_sel: mix(base.bg_sel, scale(p, 0.25), 0.5),
+        ..*base
+    }
+}
+
+/// Palette equality (all nine colors; name/effect ignored).
+fn pal_eq(a: &crate::config::Theme, b: &crate::config::Theme) -> bool {
+    a.accent == b.accent
+        && a.accent2 == b.accent2
+        && a.dir == b.dir
+        && a.media == b.media
+        && a.dim == b.dim
+        && a.scope == b.scope
+        && a.wave == b.wave
+        && a.playing == b.playing
+        && a.bg_sel == b.bg_sel
 }
 
 /// Blend two theme palettes at `t` (0 = all `from`, 1 = all `to`). The effect

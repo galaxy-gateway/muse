@@ -523,6 +523,8 @@ pub struct Settings {
     pub scope_preset: Option<String>,
     /// Name of the last-used color theme.
     pub theme: Option<String>,
+    /// Retint the active theme from the now-playing cover art. Defaults off.
+    pub adaptive_palette: Option<bool>,
     /// Gapless cross-track playback (prefetch + sample-accurate splice).
     /// `None` (absent in the file) defaults to on.
     pub gapless: Option<bool>,

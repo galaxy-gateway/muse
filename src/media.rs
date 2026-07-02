@@ -257,9 +257,155 @@ fn folder_cover(path: &Path) -> Option<Vec<u8>> {
     best.and_then(|(_, p)| std::fs::read(p).ok())
 }
 
+/// An 8-bit RGB triple (kept UI-toolkit-agnostic on purpose).
+pub type Rgb8 = (u8, u8, u8);
+
+/// Two dominant vivid colors of a decoded cover thumbnail, as (primary,
+/// secondary) RGB triples. Coarse 4-bit-per-channel histogram over a
+/// subsampled pixel grid, weighted by saturation x value so vivid album
+/// colors outrank large gray/black backgrounds. The secondary is the
+/// strongest bucket sufficiently far from the primary in hue (falling back to
+/// the second-strongest overall). `None` when the art is essentially
+/// colorless — callers should keep their existing palette.
+pub fn dominant_colors(img: &image::RgbImage) -> Option<(Rgb8, Rgb8)> {
+    #[derive(Clone, Copy, Default)]
+    struct Bucket {
+        weight: f32,
+        n: u32,
+        r: u32,
+        g: u32,
+        b: u32,
+    }
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return None;
+    }
+    // ~4k samples regardless of thumbnail size.
+    let step = ((w as usize * h as usize) / 4096).max(1);
+    let mut buckets = vec![Bucket::default(); 4096];
+    for (i, px) in img.pixels().enumerate() {
+        if !i.is_multiple_of(step) {
+            continue;
+        }
+        let [r, g, b] = px.0;
+        let (maxc, minc) = (r.max(g).max(b) as f32, r.min(g).min(b) as f32);
+        let sat = if maxc > 0.0 {
+            (maxc - minc) / maxc
+        } else {
+            0.0
+        };
+        let val = maxc / 255.0;
+        // Vividness weighting; the epsilon keeps near-monochrome art scoring.
+        let weight = sat * val + 0.02 * val;
+        let key = ((r as usize >> 4) << 8) | ((g as usize >> 4) << 4) | (b as usize >> 4);
+        let e = &mut buckets[key];
+        e.weight += weight;
+        e.n += 1;
+        e.r += r as u32;
+        e.g += g as u32;
+        e.b += b as u32;
+    }
+    let avg = |b: &Bucket| {
+        (
+            (b.r / b.n.max(1)) as u8,
+            (b.g / b.n.max(1)) as u8,
+            (b.b / b.n.max(1)) as u8,
+        )
+    };
+    let hue = |(r, g, b): Rgb8| -> f32 {
+        let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        let (maxc, minc) = (r.max(g).max(b), r.min(g).min(b));
+        let d = maxc - minc;
+        if d <= f32::EPSILON {
+            return -1.0; // achromatic
+        }
+        60.0 * if maxc == r {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if maxc == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        }
+    };
+    let primary_key = (0..buckets.len()).max_by(|&a, &b| {
+        buckets[a]
+            .weight
+            .partial_cmp(&buckets[b].weight)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })?;
+    // A cover with no meaningful color energy keeps the theme's own palette.
+    if buckets[primary_key].weight < 1.0 {
+        return None;
+    }
+    let primary = avg(&buckets[primary_key]);
+    let p_hue = hue(primary);
+    // Secondary: strongest bucket at least ~60 degrees of hue away (or a
+    // clearly different lightness for achromatic primaries).
+    let far_enough = |c: Rgb8| -> bool {
+        let h = hue(c);
+        if p_hue < 0.0 || h < 0.0 {
+            let lp = primary.0 as i32 + primary.1 as i32 + primary.2 as i32;
+            let lc = c.0 as i32 + c.1 as i32 + c.2 as i32;
+            return (lp - lc).abs() > 180;
+        }
+        let d = (h - p_hue).abs();
+        d.min(360.0 - d) > 60.0
+    };
+    let secondary_key = (0..buckets.len())
+        .filter(|&k| k != primary_key && buckets[k].n > 0 && far_enough(avg(&buckets[k])))
+        .max_by(|&a, &b| {
+            buckets[a]
+                .weight
+                .partial_cmp(&buckets[b].weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .or_else(|| {
+            (0..buckets.len())
+                .filter(|&k| k != primary_key && buckets[k].n > 0)
+                .max_by(|&a, &b| {
+                    buckets[a]
+                        .weight
+                        .partial_cmp(&buckets[b].weight)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+    // Single-color art (one occupied bucket): the primary doubles as the
+    // secondary rather than failing the whole extraction.
+    let secondary = secondary_key.map_or(primary, |k| avg(&buckets[k]));
+    Some((primary, secondary))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dominant_colors_single_hue_cover() {
+        let img = image::RgbImage::from_pixel(64, 64, image::Rgb([200, 20, 20]));
+        let (p, s) = dominant_colors(&img).expect("solid color should extract");
+        assert!(p.0 > 150 && p.1 < 60 && p.2 < 60, "primary={p:?}");
+        assert_eq!(p, s, "single-hue art doubles primary as secondary");
+    }
+
+    #[test]
+    fn dominant_colors_two_hues() {
+        let mut img = image::RgbImage::from_pixel(64, 64, image::Rgb([220, 30, 30]));
+        for y in 0..64 {
+            for x in 0..20 {
+                img.put_pixel(x, y, image::Rgb([20, 80, 230]));
+            }
+        }
+        let (p, s) = dominant_colors(&img).expect("should extract");
+        // Red dominates (more area); blue is the far-hue secondary.
+        assert!(p.0 > p.2, "primary should be the red family: {p:?}");
+        assert!(s.2 > s.0, "secondary should be the blue family: {s:?}");
+    }
+
+    #[test]
+    fn dominant_colors_black_cover_is_none() {
+        let img = image::RgbImage::from_pixel(64, 64, image::Rgb([0, 0, 0]));
+        assert!(dominant_colors(&img).is_none());
+    }
 
     #[test]
     fn folder_cover_found_by_name_priority() {

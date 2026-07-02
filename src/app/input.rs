@@ -365,6 +365,13 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.theme_move(-1),
             KeyCode::Char('g') | KeyCode::Home => self.theme_jump(0),
             KeyCode::Char('G') | KeyCode::End => self.theme_jump(THEMES.len() - 1),
+            // Adaptive palette: retint the active theme from the now-playing
+            // track's cover art. Saved immediately, like knob edits.
+            KeyCode::Char('a') => {
+                self.adaptive = !self.adaptive;
+                self.refresh_palette();
+                self.persist();
+            }
             KeyCode::Enter => self.theme_confirm(),
             KeyCode::Esc | KeyCode::Char('q') => self.theme_cancel(),
             _ => {}

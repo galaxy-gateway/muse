@@ -170,6 +170,11 @@ impl App {
         if !self.wave_art.contains_key(&path) && self.art_pending.as_ref() != Some(&path) {
             self.art_want = Some((path, std::time::Instant::now()));
         }
+        // Adaptive palette: retint from this track's cover if already cached
+        // (a fresh cover retints when its Art event lands instead).
+        if self.adaptive {
+            self.refresh_palette();
+        }
         // Maintain the shuffle bag (drop the now-playing track, refill if dry).
         self.shuffle_after_play();
         // Decode the track auto-advance will play next, so its boundary is

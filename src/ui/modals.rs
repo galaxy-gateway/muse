@@ -62,16 +62,21 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     };
 
     let list_hint = if !configurable {
-        "↑↓ pick · ⏎ apply · esc cancel"
+        "↑↓ pick · a art tint · ⏎ apply · esc"
     } else if app.theme_config {
         "↑↓ pick · tab back"
     } else {
-        "↑↓ pick · tab tune · ⏎ · esc"
+        "↑↓ pick · tab tune · a art · ⏎ · esc"
+    };
+    let title = if app.adaptive {
+        "theme · art tint on"
+    } else {
+        "theme"
     };
     let list = List::new(items)
         .block(
             panel_hint(
-                "theme",
+                title,
                 border(t, app.frame, t.accent2, 0.14, app.beat_pulse()),
                 list_hint,
                 t.dim,
