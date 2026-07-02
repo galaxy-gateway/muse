@@ -18,10 +18,10 @@
 - `src/effects/crt.rs` — imported by **1** files
 - `src/effects/datamosh.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
+- `src/effects/fireflies.rs` — imported by **1** files
 - `src/effects/fireplace.rs` — imported by **1** files
 - `src/effects/flag.rs` — imported by **1** files
 - `src/effects/flame.rs` — imported by **1** files
-- `src/effects/glitch.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 

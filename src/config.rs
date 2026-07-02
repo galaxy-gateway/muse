@@ -435,6 +435,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x08, 0x18, 0x22),
         effect: &crate::effects::TIDE,
     },
+    Theme {
+        name: "fireflies",
+        accent: rgb(0xd8, 0xf0, 0x6a),
+        accent2: rgb(0x8a, 0xa0, 0x3a),
+        dir: rgb(0x9a, 0xb0, 0x60),
+        media: rgb(0xdc, 0xe4, 0xc8),
+        dim: rgb(0x52, 0x5e, 0x3e),
+        scope: rgb(0xd8, 0xf0, 0x6a),
+        wave: rgb(0x6e, 0x80, 0x40),
+        playing: rgb(0xff, 0xff, 0xc0),
+        bg_sel: rgb(0x12, 0x16, 0x08),
+        effect: &crate::effects::FIREFLIES,
+    },
 ];
 
 impl Default for Theme {
