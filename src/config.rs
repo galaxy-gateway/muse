@@ -422,6 +422,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x18, 0x14, 0x0c),
         effect: &crate::effects::METRONOME,
     },
+    Theme {
+        name: "tide",
+        accent: rgb(0x7a, 0xd8, 0xe8),
+        accent2: rgb(0x3a, 0x74, 0xa0),
+        dir: rgb(0x5a, 0xa8, 0xc0),
+        media: rgb(0xd8, 0xf0, 0xf4),
+        dim: rgb(0x3e, 0x5c, 0x6e),
+        scope: rgb(0x7a, 0xd8, 0xe8),
+        wave: rgb(0x4a, 0x8a, 0xa8),
+        playing: rgb(0xe8, 0xff, 0xff),
+        bg_sel: rgb(0x08, 0x18, 0x22),
+        effect: &crate::effects::TIDE,
+    },
 ];
 
 impl Default for Theme {

@@ -37,6 +37,7 @@ mod snow;
 mod starfield;
 mod tape;
 mod thunderstorm;
+mod tide;
 mod vaporwave;
 
 /// How a knob is edited/displayed in the theme modal.
@@ -378,3 +379,4 @@ pub static CRT: crt::Crt = crt::Crt;
 pub static TAPE: tape::Tape = tape::Tape;
 pub static SEISMOGRAPH: seismograph::Seismograph = seismograph::Seismograph;
 pub static METRONOME: metronome::Metronome = metronome::Metronome;
+pub static TIDE: tide::Tide = tide::Tide;
