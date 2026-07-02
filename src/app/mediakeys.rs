@@ -13,6 +13,18 @@ use crate::event::AppEvent;
 impl App {
     /// Handle an OS media-key / now-playing control event.
     pub(super) fn on_media(&mut self, e: MediaControlEvent) {
+        // Transport commands act on the displayed track: flush any deferred
+        // burst Open first. (Seeks flush inside seek_rel/seek_to_secs; volume
+        // is track-independent and needs no flush.)
+        if matches!(
+            e,
+            MediaControlEvent::Play
+                | MediaControlEvent::Pause
+                | MediaControlEvent::Toggle
+                | MediaControlEvent::Stop
+        ) {
+            self.fire_deferred_open();
+        }
         match e {
             MediaControlEvent::Play => self.engine.send(TransportCmd::Play),
             MediaControlEvent::Pause => self.engine.send(TransportCmd::Pause),

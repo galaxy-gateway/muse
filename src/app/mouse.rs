@@ -75,6 +75,9 @@ impl App {
     /// Relative seek; clears the spectrum so the FFT history doesn't smear
     /// across the discontinuity.
     pub(super) fn seek_rel(&mut self, secs: f64) {
+        // Seeks act on the displayed track: flush any deferred burst Open so
+        // the seek lands in the new stream (Open then Seek drain in order).
+        self.fire_deferred_open();
         self.spectrum.clear();
         self.engine.send(TransportCmd::SeekRel(secs));
     }
@@ -88,6 +91,7 @@ impl App {
 
     /// Absolute seek; clears the spectrum (see `seek_rel`).
     pub(super) fn seek_to_secs(&mut self, secs: f64) {
+        self.fire_deferred_open();
         self.spectrum.clear();
         self.engine.send(TransportCmd::SeekTo(secs));
     }

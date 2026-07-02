@@ -150,28 +150,63 @@ fn run(
     let mut last_mouse_draw = Instant::now();
     let min_frame = Duration::from_millis(16);
 
-    while let Ok(ev) = rx.recv() {
-        let is_tick = matches!(ev, AppEvent::Tick);
-        let is_mouse_move =
-            matches!(ev, AppEvent::Mouse(m) if m.kind == crossterm::event::MouseEventKind::Moved);
-        app.handle(ev);
-        if app.should_quit {
-            break;
+    'outer: while let Ok(first) = rx.recv() {
+        // Drain everything already queued and process it as one batch, with
+        // inputs handled BEFORE a single coalesced Tick. This keeps the app
+        // responsive through stalls (a slow handle/draw can leave dozens of
+        // ticks + presses queued: replaying every stale tick was wasted work)
+        // and it is load-bearing for the burst-Open debounce: a stale tick
+        // processed ahead of queued presses would see an old `open_want`
+        // timestamp and fire the deferred Open mid-burst.
+        let mut batch = vec![first];
+        while let Ok(ev) = rx.try_recv() {
+            batch.push(ev);
         }
-        // Only redraw on non-tick events, or ticks when not idle, or if needs_settle.
-        let should_draw = if is_tick {
-            !app.idle && last_draw.elapsed() >= min_frame
-        } else if is_mouse_move {
-            // Rate-limit pure mouse move events to ~60fps.
-            last_mouse_draw.elapsed() >= min_frame
-        } else {
-            // Non-tick, non-move events always redraw immediately.
-            true
-        };
+        let mut got_tick = false;
+        let mut got_input = false;
+        let mut got_mouse_move = false;
+        let mut got_other = false;
+        for ev in batch {
+            match &ev {
+                AppEvent::Tick => {
+                    // Coalesce: N queued ticks are one housekeeping pass.
+                    got_tick = true;
+                    continue;
+                }
+                AppEvent::Mouse(m) if m.kind == crossterm::event::MouseEventKind::Moved => {
+                    got_mouse_move = true
+                }
+                AppEvent::Input(_) => got_input = true,
+                _ => got_other = true,
+            }
+            app.handle(ev);
+            if app.should_quit {
+                break 'outer;
+            }
+        }
+        if got_tick {
+            app.handle(AppEvent::Tick);
+            if app.should_quit {
+                break;
+            }
+        }
+        // One draw per batch. Non-tick, non-pointer events (wave, art, media)
+        // draw immediately; ticks only when not idle; inputs and mouse moves
+        // are rate-limited to ~60fps. A skipped input settles on the next
+        // batch via needs_settle, so the final frame of a burst never goes
+        // stale.
+        let fresh = last_draw.elapsed() >= min_frame;
+        let should_draw = got_other
+            || (got_tick && !app.idle && fresh)
+            || (got_input && fresh)
+            || (got_mouse_move && last_mouse_draw.elapsed() >= min_frame);
+        if got_input && !should_draw {
+            app.needs_settle = true;
+        }
         if should_draw || app.needs_settle {
             terminal.draw(|f| ui::draw(f, app))?;
             last_draw = Instant::now();
-            if is_mouse_move {
+            if got_mouse_move {
                 last_mouse_draw = Instant::now();
             }
             app.needs_settle = false;

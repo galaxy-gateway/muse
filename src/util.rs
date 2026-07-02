@@ -79,3 +79,19 @@ pub fn fmt_size(bytes: u64) -> String {
     }
     format!("{v:.1} {}", UNITS[u])
 }
+
+/// Ask libmalloc to return freed-but-cached dirty pages to the OS. This is what
+/// drains the hundreds of MB of MALLOC_LARGE (empty) regions left after rapid
+/// track cycling (see docs/rapid-cycle-memory.md) in ~ms instead of ~35s.
+/// Costs a few ms (walks all malloc zones) — call from a background thread,
+/// never the UI, decode, or audio-callback thread.
+/// Returns the number of bytes libmalloc reports it released.
+#[cfg(target_os = "macos")]
+pub fn malloc_pressure_relief() -> usize {
+    unsafe extern "C" {
+        // malloc/malloc.h: size_t malloc_zone_pressure_relief(malloc_zone_t*, size_t);
+        // NULL zone = all zones, goal 0 = release everything possible.
+        fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+    }
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
+}

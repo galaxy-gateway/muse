@@ -108,6 +108,11 @@ pub struct App {
     pub(super) wave_order: Vec<PathBuf>,
     pub wave_pending: Option<PathBuf>,
     pub wave_gen: u64,
+    /// Path whose `wave_cache` entry is only a partial snapshot of the live
+    /// stream fill (a stopgap, not a final waveform). `sync_stream_waveform`
+    /// keeps refreshing it each tick, and it stays eligible for an envelope
+    /// request; cleared when the real envelope lands (`AppEvent::Wave`).
+    pub(super) wave_stream_stopgap: Option<PathBuf>,
     /// Debouncing for browse waveform requests: (path, when set). On-selection-changed
     /// just writes this; Tick arm fires after 150ms idle to a persistent worker.
     pub(super) wave_want: Option<(PathBuf, Instant)>,
@@ -118,6 +123,19 @@ pub struct App {
     /// mode toggle re-primed it). The Tick arm calls `preload_next` once this is
     /// ~400ms old, so a held `n`/`p` never spawns a prefetch decoder per press.
     pub(super) preload_want: Option<Instant>,
+    /// Deferred engine Open during a rapid `n`/`p` burst: (track to open,
+    /// instant of the LATEST press). Trailing-edge fired from the Tick arm;
+    /// while pending, the previous track keeps playing and `now_playing` is
+    /// already the new track. Keeps a held key from spawning one decoder per
+    /// press (~1MB warmup window each — see docs/rapid-cycle-memory.md).
+    pub(super) open_want: Option<(PathBuf, Instant)>,
+    /// When `play_path_inner` last requested an open (sent OR deferred).
+    /// Leading-edge detection: a press within `OPEN_BURST_GAP` of the previous
+    /// request is part of a burst and defers.
+    pub(super) last_open_req: Option<Instant>,
+    /// Arm a one-shot malloc pressure-relief sweep ~2s after a burst settles,
+    /// so the allocator's freed-but-dirty pages return to the OS promptly.
+    pub(super) relief_want: Option<Instant>,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -311,9 +329,13 @@ impl App {
             wave_order: Vec::new(),
             wave_pending: None,
             wave_gen: 0,
+            wave_stream_stopgap: None,
             wave_want: None,
             art_want: None,
             preload_want: None,
+            open_want: None,
+            last_open_req: None,
+            relief_want: None,
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -501,10 +523,17 @@ impl App {
             gapless: Some(self.gapless),
             shuffle: Some(self.shuffle),
             session_track: self.now_playing.as_ref().map(p2s),
-            session_pos: self
-                .now_playing
-                .as_ref()
-                .map(|_| self.engine.position_secs()),
+            // A deferred burst Open means the engine playhead still belongs to
+            // the OLD track; the pending pick hasn't started, so it restores
+            // from the top. (Flushing here instead would race the decode
+            // thread at shutdown.)
+            session_pos: self.now_playing.as_ref().map(|_| {
+                if self.open_want.is_some() {
+                    0.0
+                } else {
+                    self.engine.position_secs()
+                }
+            }),
             session_volume: Some(self.engine.volume()),
             session_loop: Some(self.loop_mode.as_str().to_string()),
             session_cursor: self.cursor_path().as_ref().map(p2s),
@@ -701,13 +730,26 @@ impl App {
         let Some(np) = self.now_playing.clone() else {
             return;
         };
+        // While a burst Open is deferred, the engine's stream (and its live
+        // bins) still belong to the OLD track; inserting them under the new
+        // now-playing path would poison wave_cache with wrong-track peaks.
+        // Skip entirely until the real Open fires.
+        if self.open_want.is_some() {
+            return;
+        }
         // Prefer the up-front envelope once it's cached — only use the progressive
-        // stream fill as a stopgap before it arrives.
-        if self.wave_cache.contains_key(&np) {
+        // stream fill as a stopgap before it arrives. A cache entry we wrote
+        // ourselves from the stream is only a partial snapshot, NOT a final
+        // waveform: keep refreshing it every tick or it freezes at whatever
+        // sliver had decoded on the first tick.
+        let have_final =
+            self.wave_cache.contains_key(&np) && self.wave_stream_stopgap.as_ref() != Some(&np);
+        if have_final {
             // Already have a (full) waveform — leave it.
         } else if let Some(bins) = self.engine.stream_bins() {
             // Streaming track with real peaks: fill the waveform in live.
             self.wave_cache.insert(np.clone(), bins);
+            self.wave_stream_stopgap = Some(np.clone());
             touch_lru(&mut self.wave_order, &np);
             self.evict_wave();
         } else if self.engine.has_stream() {
@@ -749,16 +791,37 @@ impl App {
                 // Decode-thread gapless advance happens before the UI knows;
                 // adopt the new now-playing first, then run the stop-edge
                 // detector (which only fires when no preload was spliced).
+                // An advance that lands while a burst Open is deferred is a
+                // stale pre-burst prediction the user already superseded: drop
+                // it and open the user's pick right away (the Open cancels the
+                // spliced stream in the decode loop).
                 while let Some(path) = self.engine.poll_advance() {
-                    self.on_auto_advanced(path);
+                    if self.open_want.is_some() {
+                        self.fire_deferred_open();
+                    } else {
+                        self.on_auto_advanced(path);
+                    }
                 }
                 self.check_track_end();
                 self.sync_media_playback();
                 self.sync_stream_waveform();
+                // Trailing edge of the burst-Open debounce: presses stopped —
+                // open the surviving track. Placed after sync_stream_waveform
+                // so its open_want guard covers the tick the Open is sent on
+                // (the decode thread swaps current_bins within ~8ms, before
+                // the next 16ms tick).
+                if let Some((_, since)) = &self.open_want
+                    && since.elapsed().as_millis() >= playback::OPEN_TRAILING_MS
+                {
+                    self.fire_deferred_open();
+                }
                 // Check debounced browse waveform request (150ms idle).
                 if let Some((path, since)) = self.wave_want.take() {
+                    // A stream-stopgap cache entry must not satisfy this check —
+                    // it's partial, and the envelope is what replaces it.
                     if since.elapsed().as_millis() >= 150
-                        && !self.wave_cache.contains_key(&path)
+                        && (!self.wave_cache.contains_key(&path)
+                            || self.wave_stream_stopgap.as_ref() == Some(&path))
                         && self.wave_pending.as_ref() != Some(&path)
                     {
                         self.wave_gen += 1;
@@ -798,6 +861,23 @@ impl App {
                         self.art_want = Some((path, since));
                     }
                 }
+                // ~2s after a burst settled, ask libmalloc to return the
+                // burst's freed-but-dirty pages to the OS (they otherwise stay
+                // resident for ~35s — see docs/rapid-cycle-memory.md). By then
+                // the survivor's window expansion (~0.5s in) and the 400ms
+                // preload have allocated, so the sweep only releases dead
+                // pages. Runs on a throwaway thread: the zone walk takes a few
+                // ms and must not eat a UI frame.
+                if let Some(since) = self.relief_want
+                    && self.open_want.is_none()
+                    && since.elapsed().as_millis() >= 2000
+                {
+                    self.relief_want = None;
+                    #[cfg(target_os = "macos")]
+                    thread::spawn(|| {
+                        crate::util::malloc_pressure_relief();
+                    });
+                }
                 let ctx = self.frame_ctx();
                 let fx = self.theme.effect;
                 // When paused and particles are empty, decimate effects (skip 3 of 4 frames).
@@ -829,6 +909,11 @@ impl App {
                 self.evict_wave();
                 if self.wave_pending.as_ref() == Some(&path) {
                     self.wave_pending = None;
+                }
+                // The envelope replaces any partial stream stopgap for this path;
+                // the entry is final now, so stop refreshing over it.
+                if self.wave_stream_stopgap.as_ref() == Some(&path) {
+                    self.wave_stream_stopgap = None;
                 }
             }
             AppEvent::Art(path, art) => {

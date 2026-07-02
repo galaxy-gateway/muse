@@ -65,7 +65,13 @@ impl App {
             (KeyCode::Char('h'), _) | (KeyCode::Left, _) => self.collapse_or_parent(),
             (KeyCode::Char('l'), _) | (KeyCode::Right, _) => self.expand(),
             (KeyCode::Enter, _) => self.enter(),
-            (KeyCode::Char(' '), _) => self.engine.send(TransportCmd::Toggle),
+            (KeyCode::Char(' '), _) => {
+                // Pause/resume must act on the displayed track: flush any
+                // deferred burst Open first (net effect: the new track sits
+                // paused at 0:00, matching the UI).
+                self.fire_deferred_open();
+                self.engine.send(TransportCmd::Toggle)
+            }
             (KeyCode::Char('n'), _) => self.play_next(),
             (KeyCode::Char('p'), _) => self.play_prev(),
             (KeyCode::Char('u'), _) => self.play_previous_track(),

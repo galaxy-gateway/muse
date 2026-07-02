@@ -2,9 +2,20 @@
 //! next/prev, and applying the loop mode at end-of-track.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::{App, LoopMode};
 use crate::audio::TransportCmd;
+
+/// A press within this gap of the previous open request is a burst: defer the
+/// engine Open instead of switching audio per press. OS key repeat is 30-90ms;
+/// deliberate separate picks are >250ms. Matches `NAV_ACCEL_WINDOW`'s 200ms
+/// held-repeat precedent in input.rs.
+const OPEN_BURST_GAP: Duration = Duration::from_millis(200);
+/// Trailing-edge delay: fire the deferred Open once presses stop for this long.
+/// Must exceed the largest press interval classified as burst repeat (~90ms)
+/// plus tick granularity (16ms), or it would fire mid-burst.
+pub(super) const OPEN_TRAILING_MS: u128 = 150;
 
 /// Copy `path`'s absolute form to the system clipboard. Returns whether it
 /// succeeded — a no-op-false when the clipboard is unavailable (headless / no
@@ -47,8 +58,37 @@ impl App {
                 self.push_history(cur);
             }
         }
-        self.engine.send(TransportCmd::Open(path.clone()));
-        self.begin_now_playing(path);
+        // Leading+trailing-edge debounce of the engine Open. A lone press (or
+        // presses spaced > OPEN_BURST_GAP) switches audio instantly, exactly as
+        // before. During a rapid burst (held `n`/`p`) the UI tracks each press
+        // but the engine keeps playing the old track; the surviving pick opens
+        // once presses stop (trailing edge, fired from the Tick arm). This is
+        // what stops a held key from spawning one ~1MB decoder per press.
+        let now = std::time::Instant::now();
+        let in_burst = self.open_want.is_some()
+            || self
+                .last_open_req
+                .is_some_and(|t| now.duration_since(t) < OPEN_BURST_GAP);
+        self.last_open_req = Some(now);
+        if in_burst {
+            // Keep only the survivor; the trailing timer restarts per press.
+            self.open_want = Some((path.clone(), now));
+            self.note_now_playing(path);
+        } else {
+            self.engine.send(TransportCmd::Open(path.clone()));
+            self.begin_now_playing(path);
+        }
+    }
+
+    /// Send the deferred burst Open (trailing edge or a forced flush from a
+    /// transport action that must act on the displayed track). No-op when
+    /// nothing is pending. Arms the post-burst allocator relief sweep.
+    pub(super) fn fire_deferred_open(&mut self) {
+        if let Some((path, _)) = self.open_want.take() {
+            self.engine.send(TransportCmd::Open(path.clone()));
+            self.on_engine_open(&path);
+            self.relief_want = Some(std::time::Instant::now());
+        }
     }
 
     /// Return to the previously-playing track and resume at the playhead it had
@@ -57,6 +97,10 @@ impl App {
     pub(super) fn play_previous_track(&mut self) {
         if let Some((path, pos)) = self.prev_track.take() {
             self.play_path(path);
+            // A resume-at-position play is a deliberate act: flush any deferred
+            // burst Open so the SeekTo scrubs the track we just opened, not the
+            // old stream.
+            self.fire_deferred_open();
             self.engine.send(TransportCmd::SeekTo(pos));
         }
     }
@@ -72,20 +116,52 @@ impl App {
     /// Shared now-playing bookkeeping once the engine is pointed at `path`,
     /// whether by an explicit `Open` or a decode-thread auto-advance.
     pub(super) fn begin_now_playing(&mut self, path: PathBuf) {
+        self.note_now_playing(path.clone());
+        self.on_engine_open(&path);
+    }
+
+    /// Work that belongs to the moment the ENGINE actually opens the track —
+    /// run once per confirmed switch, never per burst press.
+    fn on_engine_open(&mut self, path: &Path) {
+        // The old audio keeps playing while an Open is deferred, so its
+        // spectrum stays valid until the real switch.
         self.spectrum.clear();
-        self.now_playing = Some(path.clone());
-        // The engine is (or is about to be) playing; arm end-of-track detection.
-        self.prev_playing = true;
         // Ensure now-playing tags are loaded (cached) before pushing OS metadata,
-        // since auto-advance may reach a track the cursor never selected.
-        self.ensure_meta(&path);
+        // since auto-advance may reach a track the cursor never selected. On a
+        // cold cache this is a disk stat + tag parse; the OS metadata push is an
+        // IPC call — both are why this must not run 25x/sec during a burst.
+        self.ensure_meta(path);
         self.push_media_metadata();
+    }
+
+    /// Per-press UI bookkeeping — cheap in-memory state, safe to run at
+    /// key-repeat rate while the engine Open is deferred.
+    fn note_now_playing(&mut self, path: PathBuf) {
+        self.now_playing = Some(path.clone());
+        // The engine is (or will be, once the deferred Open fires) playing;
+        // arm end-of-track detection.
+        self.prev_playing = true;
         // Queue the cheap up-front waveform + cover art through the same
         // debounced single-worker slots browsing uses. A held `n`/`p` then does
         // no decode work per press — only the track that survives the debounce
         // computes; `sync_stream_waveform` shows the progressive decode fill as
         // a stopgap until the envelope lands.
-        if !self.wave_cache.contains_key(&path) && self.wave_pending.as_ref() != Some(&path) {
+        // A leftover partial stream snapshot for a *different* track must not
+        // masquerade as its final waveform — drop it so browsing or replaying
+        // that track recomputes from scratch.
+        if self
+            .wave_stream_stopgap
+            .as_deref()
+            .is_some_and(|o| o != path)
+        {
+            let old = self.wave_stream_stopgap.take().unwrap();
+            self.wave_cache.remove(&old);
+            self.wave_order.retain(|p| p != &old);
+        }
+        if (!self.wave_cache.contains_key(&path)
+            || self.wave_stream_stopgap.as_ref() == Some(&path))
+            && self.wave_pending.as_ref() != Some(&path)
+        {
             self.wave_want = Some((path.clone(), std::time::Instant::now()));
         }
         if !self.wave_art.contains_key(&path) && self.art_pending.as_ref() != Some(&path) {
@@ -192,6 +268,13 @@ impl App {
             self.prev_playing && !playing && dur > 0.0 && self.engine.position_secs() >= dur - 0.05;
         self.prev_playing = playing;
         if !ended {
+            return;
+        }
+        // The old track ran out while a burst Open was deferred: the user
+        // already picked the next track, so open it right now instead of
+        // applying the loop mode (no silence, no fighting the pending pick).
+        if self.open_want.is_some() {
+            self.fire_deferred_open();
             return;
         }
         // LoopMode::One repeats in place; otherwise advance via the queue-aware
