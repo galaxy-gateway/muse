@@ -33,6 +33,7 @@ mod rave;
 mod sakura;
 mod snow;
 mod starfield;
+mod tape;
 mod thunderstorm;
 mod vaporwave;
 
@@ -234,6 +235,10 @@ pub trait ThemeEffect: Sync {
     /// Mouse-wheel scrolled the list.
     fn on_scroll(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
 
+    /// The engine switched tracks (manual open or gapless advance) — themes
+    /// can react once per real audio switch (Tape's rewind smear).
+    fn on_track(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
+
     /// Per-tick continuous spawning (rain, bubbles, scope shoot-offs, ...).
     fn ambient(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
 
@@ -358,3 +363,4 @@ pub static CIRCUIT: circuit::Circuit = circuit::Circuit;
 pub static CONSTELLATIONS: constellations::Constellations = constellations::Constellations;
 pub static RAVE: rave::Rave = rave::Rave;
 pub static CRT: crt::Crt = crt::Crt;
+pub static TAPE: tape::Tape = tape::Tape;

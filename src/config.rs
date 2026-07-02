@@ -383,6 +383,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x20, 0x14, 0x00),
         effect: &crate::effects::CRT,
     },
+    Theme {
+        name: "tape deck",
+        accent: rgb(0xc8, 0x8a, 0x4a),
+        accent2: rgb(0xe8, 0xd0, 0xa8),
+        dir: rgb(0xa8, 0x74, 0x40),
+        media: rgb(0xe8, 0xdc, 0xc8),
+        dim: rgb(0x6a, 0x54, 0x3a),
+        scope: rgb(0xd8, 0xa8, 0x60),
+        wave: rgb(0x8a, 0x64, 0x38),
+        playing: rgb(0xff, 0xd9, 0x8a),
+        bg_sel: rgb(0x1e, 0x14, 0x0a),
+        effect: &crate::effects::TAPE,
+    },
 ];
 
 impl Default for Theme {

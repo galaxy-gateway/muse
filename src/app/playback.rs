@@ -132,6 +132,9 @@ impl App {
         // IPC call — both are why this must not run 25x/sec during a burst.
         self.ensure_meta(path);
         self.push_media_metadata();
+        // Let the theme react once per real audio switch (Tape's rewind smear).
+        let ctx = self.frame_ctx();
+        self.theme.effect.on_track(&mut self.sim, &ctx);
     }
 
     /// Per-press UI bookkeeping — cheap in-memory state, safe to run at
