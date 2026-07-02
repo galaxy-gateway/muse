@@ -31,6 +31,7 @@ mod meltdown;
 mod plasma;
 mod rave;
 mod sakura;
+mod seismograph;
 mod snow;
 mod starfield;
 mod tape;
@@ -364,3 +365,4 @@ pub static CONSTELLATIONS: constellations::Constellations = constellations::Cons
 pub static RAVE: rave::Rave = rave::Rave;
 pub static CRT: crt::Crt = crt::Crt;
 pub static TAPE: tape::Tape = tape::Tape;
+pub static SEISMOGRAPH: seismograph::Seismograph = seismograph::Seismograph;

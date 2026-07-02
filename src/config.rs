@@ -396,6 +396,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x1e, 0x14, 0x0a),
         effect: &crate::effects::TAPE,
     },
+    Theme {
+        name: "seismograph",
+        accent: rgb(0xc8, 0xbc, 0xa4),
+        accent2: rgb(0xd8, 0x3a, 0x2a),
+        dir: rgb(0xa8, 0x9c, 0x84),
+        media: rgb(0xe0, 0xd8, 0xc4),
+        dim: rgb(0x5e, 0x58, 0x4a),
+        scope: rgb(0xd8, 0x3a, 0x2a),
+        wave: rgb(0x8a, 0x80, 0x68),
+        playing: rgb(0xf0, 0xe6, 0xd0),
+        bg_sel: rgb(0x1a, 0x18, 0x12),
+        effect: &crate::effects::SEISMOGRAPH,
+    },
 ];
 
 impl Default for Theme {
