@@ -1011,8 +1011,10 @@ impl App {
                 self.idle = !self.engine.is_playing()
                     && !fx.is_animated()
                     && self.sim.is_empty()
-                    // A palette crossfade must keep redrawing to be visible.
-                    && self.theme_fade.is_none();
+                    // A palette crossfade must keep redrawing to be visible,
+                    // and the theme picker's live preview swatches animate.
+                    && self.theme_fade.is_none()
+                    && !self.show_theme;
                 self.idle_flag.store(self.idle, Ordering::Relaxed);
                 if !prev_idle && self.idle {
                     // Just became idle; draw once more to settle the final frame.

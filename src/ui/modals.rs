@@ -24,18 +24,31 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     f.render_widget(Clear, area);
     let items: Vec<ListItem> = THEMES
         .iter()
-        .map(|th| {
+        .enumerate()
+        .map(|(i, th)| {
             let swatch = |c| Span::styled("██", Style::default().fg(c));
             let tag = if th.effect.is_animated() {
                 "✦ "
             } else {
                 "  "
             };
+            // Live preview: the leading cells run the theme's own border
+            // animation (each effect's cheap signature move), phase-offset
+            // per row and pulsing with the real beat — so animated themes can
+            // be compared before committing. Static themes render a plain
+            // palette strip because their border() is the identity.
+            let beat = app.beat_pulse();
+            let live1 = th
+                .effect
+                .border(th.accent, app.frame, i as f64 * 0.13, beat);
+            let live2 = th
+                .effect
+                .border(th.accent2, app.frame, i as f64 * 0.13 + 0.4, beat);
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:<15}", th.name), Style::default().fg(th.media)),
                 Span::styled(tag, Style::default().fg(t.dim)),
-                swatch(th.accent),
-                swatch(th.accent2),
+                swatch(live1),
+                swatch(live2),
                 swatch(th.scope),
                 swatch(th.playing),
             ]))
