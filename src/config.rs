@@ -370,6 +370,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x0a, 0x0e, 0x1e),
         effect: &crate::effects::CONSTELLATIONS,
     },
+    Theme {
+        name: "crt",
+        accent: rgb(0xff, 0xb0, 0x00),
+        accent2: rgb(0xff, 0xd7, 0x66),
+        dir: rgb(0xd8, 0x92, 0x1a),
+        media: rgb(0xff, 0xe4, 0xb0),
+        dim: rgb(0x7a, 0x5c, 0x20),
+        scope: rgb(0xff, 0xb0, 0x00),
+        wave: rgb(0xa8, 0x78, 0x18),
+        playing: rgb(0xff, 0xe1, 0x4a),
+        bg_sel: rgb(0x20, 0x14, 0x00),
+        effect: &crate::effects::CRT,
+    },
 ];
 
 impl Default for Theme {

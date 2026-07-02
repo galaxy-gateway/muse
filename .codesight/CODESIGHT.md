@@ -4,7 +4,7 @@
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
 > **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~9,100 tokens. **Saves ~8,500 tokens per conversation.**
-> **Last scanned:** 2026-07-02 06:49 — re-run after significant changes
+> **Last scanned:** 2026-07-02 20:26 — re-run after significant changes
 
 ---
 
@@ -33,13 +33,13 @@
 - `src/effects/bubbles.rs` — imported by **1** files
 - `src/effects/circuit.rs` — imported by **1** files
 - `src/effects/constellations.rs` — imported by **1** files
+- `src/effects/crt.rs` — imported by **1** files
 - `src/effects/datamosh.rs` — imported by **1** files
 - `src/effects/electric.rs` — imported by **1** files
 - `src/effects/fireplace.rs` — imported by **1** files
 - `src/effects/flag.rs` — imported by **1** files
 - `src/effects/flame.rs` — imported by **1** files
 - `src/effects/glitch.rs` — imported by **1** files
-- `src/effects/matrix.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
