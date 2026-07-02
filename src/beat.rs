@@ -48,6 +48,135 @@ impl Band {
     }
 }
 
+/// Tempo (BPM + beat phase) estimated from full-band onset times. Intervals
+/// between onsets are octave-folded into a plausible beat range and averaged
+/// around their median; a light phase-locked loop keeps a beat grid anchored
+/// to onsets that land near predictions, so effects can *anticipate* beats
+/// (swing a pendulum, brighten just before the hit) instead of reacting late.
+/// All time arguments are seconds on one monotonic clock, passed explicitly so
+/// the tracker is testable with synthetic onsets.
+pub struct TempoTracker {
+    /// Recent octave-folded onset intervals (secs), newest last.
+    intervals: Vec<f64>,
+    last_onset: Option<f64>,
+    /// Estimated beat period (secs); 0.0 = unknown.
+    period: f64,
+    /// Time of a beat on the locked grid (phase reference).
+    anchor: f64,
+    /// Fraction of recent intervals agreeing with `period` (0..1).
+    confidence: f64,
+    /// Cached per-tick outputs.
+    phase: f32,
+}
+
+/// Octave-fold plausible beat periods into this range (secs): ~60-180 BPM.
+const FOLD_LO: f64 = 0.333;
+const FOLD_HI: f64 = 1.0;
+/// How many folded intervals we remember / need before trusting an estimate.
+const HISTORY: usize = 24;
+const MIN_INTERVALS: usize = 6;
+
+impl TempoTracker {
+    fn new() -> Self {
+        Self {
+            intervals: Vec::new(),
+            last_onset: None,
+            period: 0.0,
+            anchor: 0.0,
+            confidence: 0.0,
+            phase: 0.0,
+        }
+    }
+
+    /// Advance one tick at time `now`; `onset` marks a fresh full-band hit.
+    pub fn on_tick(&mut self, now: f64, onset: bool) {
+        if onset {
+            if let Some(prev) = self.last_onset {
+                let delta = now - prev;
+                // Ignore double-fires and gaps too long to be adjacent beats.
+                if (0.20..=2.2).contains(&delta) {
+                    let mut d = delta;
+                    while d > FOLD_HI {
+                        d /= 2.0;
+                    }
+                    while d < FOLD_LO {
+                        d *= 2.0;
+                    }
+                    self.intervals.push(d);
+                    if self.intervals.len() > HISTORY {
+                        self.intervals.remove(0);
+                    }
+                    self.reestimate();
+                }
+            }
+            self.last_onset = Some(now);
+            if self.period > 0.0 {
+                // PLL: an onset near a predicted beat pulls the grid toward it;
+                // off-grid onsets (syncopation) leave the phase alone.
+                let beats = ((now - self.anchor) / self.period).round();
+                let target = self.anchor + beats * self.period;
+                let err = now - target;
+                if err.abs() < 0.18 * self.period {
+                    self.anchor += err * 0.5;
+                } else if self.confidence < 0.5 {
+                    // Not locked yet: re-anchor freely so we can converge.
+                    self.anchor = now;
+                }
+            } else {
+                self.anchor = now;
+            }
+        }
+        // Stale music (or silence): decay trust until the estimate goes away.
+        if let Some(prev) = self.last_onset
+            && now - prev > 4.0 * self.period.max(0.5)
+        {
+            self.confidence *= 0.985;
+        }
+        self.phase = if self.period > 0.0 {
+            (((now - self.anchor) / self.period).rem_euclid(1.0)) as f32
+        } else {
+            0.0
+        };
+    }
+
+    /// Median-anchored average: estimate the period from intervals within 12%
+    /// of the median, and let agreement drive confidence.
+    fn reestimate(&mut self) {
+        if self.intervals.len() < MIN_INTERVALS {
+            return;
+        }
+        let mut sorted = self.intervals.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = sorted[sorted.len() / 2];
+        let close: Vec<f64> = self
+            .intervals
+            .iter()
+            .copied()
+            .filter(|d| (d - median).abs() < median * 0.12)
+            .collect();
+        if close.is_empty() {
+            return;
+        }
+        self.period = close.iter().sum::<f64>() / close.len() as f64;
+        self.confidence = close.len() as f64 / self.intervals.len() as f64;
+    }
+
+    fn locked(&self) -> bool {
+        self.period > 0.0 && self.confidence >= 0.5 && self.intervals.len() >= MIN_INTERVALS
+    }
+
+    /// Beat phase 0..1 (0 = on the beat), or `None` until the lock is trusted.
+    pub fn phase(&self) -> Option<f32> {
+        self.locked().then_some(self.phase)
+    }
+
+    /// Estimated tempo, or `None` until the lock is trusted. The octave fold
+    /// means this can be half/double the "felt" tempo on extreme material.
+    pub fn bpm(&self) -> Option<f32> {
+        self.locked().then_some((60.0 / self.period) as f32)
+    }
+}
+
 pub struct BeatState {
     full: Band,
     bass: Band,
@@ -56,6 +185,10 @@ pub struct BeatState {
     /// One-pole low-pass states used to split the signal into bands.
     lp_bass: f32,
     lp_mid: f32,
+    /// Tempo estimation over full-band onsets.
+    tempo: TempoTracker,
+    /// Monotonic clock epoch for the tracker's time axis.
+    epoch: std::time::Instant,
 }
 
 impl BeatState {
@@ -67,6 +200,8 @@ impl BeatState {
             treble: Band::new(),
             lp_bass: 0.0,
             lp_mid: 0.0,
+            tempo: TempoTracker::new(),
+            epoch: std::time::Instant::now(),
         }
     }
 
@@ -84,6 +219,10 @@ impl BeatState {
             self.bass.idle();
             self.mid.idle();
             self.treble.idle();
+            // Keep the tempo clock advancing so the lock decays over a pause
+            // instead of freezing mid-phase.
+            self.tempo
+                .on_tick(self.epoch.elapsed().as_secs_f64(), false);
             return;
         }
 
@@ -111,10 +250,16 @@ impl BeatState {
         let n = frames as f32;
         let rms = |e: f32| (e / n).sqrt();
         // Per-band gains: treble energy is smaller, so it gets a bigger boost.
+        let before = self.full.pulse;
         self.full.feed((rms(ef) * 3.2).min(1.0));
         self.bass.feed((rms(eb) * 4.0).min(1.0));
         self.mid.feed((rms(em) * 6.0).min(1.0));
         self.treble.feed((rms(et) * 10.0).min(1.0));
+        // A meaningful jump of the full-band pulse is an onset EVENT for the
+        // tempo tracker (the pulse itself is a decaying envelope, not events).
+        let onset = self.full.pulse > before + 0.15 && self.full.pulse > 0.35;
+        self.tempo
+            .on_tick(self.epoch.elapsed().as_secs_f64(), onset);
     }
 
     /// Full-band onset pulse, 0..1 — full on a fresh beat, decaying over a few
@@ -126,5 +271,77 @@ impl BeatState {
     /// Per-band onset pulses `[bass, mid, treble]`, each 0..1.
     pub fn bands(&self) -> [f32; 3] {
         [self.bass.pulse, self.mid.pulse, self.treble.pulse]
+    }
+
+    /// Locked beat phase 0..1 (0 = on the beat), `None` until trusted.
+    pub fn tempo_phase(&self) -> Option<f32> {
+        self.tempo.phase()
+    }
+
+    /// Estimated tempo in BPM, `None` until trusted.
+    pub fn bpm(&self) -> Option<f32> {
+        self.tempo.bpm()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TempoTracker;
+
+    /// Feed a steady 120 BPM click (0.5s period) with 60Hz ticks and check the
+    /// tracker locks to it with phase ~0 right after each onset.
+    #[test]
+    fn tempo_locks_to_steady_beat() {
+        let mut t = TempoTracker::new();
+        let dt = 1.0 / 60.0;
+        let mut now = 0.0;
+        let mut next_beat = 0.5;
+        for _ in 0..(60 * 20) {
+            now += dt;
+            let onset = now >= next_beat;
+            if onset {
+                next_beat += 0.5;
+            }
+            t.on_tick(now, onset);
+        }
+        let bpm = t.bpm().expect("should lock on a steady click");
+        assert!((bpm - 120.0).abs() < 4.0, "bpm={bpm}");
+        // Right after the last processed beat the phase should be small.
+        let phase = t.phase().unwrap();
+        assert!(phase < 0.2 || phase > 0.8, "phase={phase}");
+    }
+
+    /// Jittered onsets (+-20ms) still lock near the true tempo.
+    #[test]
+    fn tempo_tolerates_jitter() {
+        let mut t = TempoTracker::new();
+        let dt = 1.0 / 60.0;
+        let mut now = 0.0;
+        let mut k = 1u32;
+        let mut next_beat = 0.5;
+        for _ in 0..(60 * 30) {
+            now += dt;
+            if now >= next_beat {
+                t.on_tick(now, true);
+                k = k.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let jitter = ((k >> 16) % 40) as f64 / 1000.0 - 0.02;
+                next_beat += 0.5 + jitter;
+            } else {
+                t.on_tick(now, false);
+            }
+        }
+        let bpm = t.bpm().expect("should lock despite jitter");
+        assert!((bpm - 120.0).abs() < 8.0, "bpm={bpm}");
+    }
+
+    /// No onsets at all: never claims a lock.
+    #[test]
+    fn tempo_stays_unlocked_on_silence() {
+        let mut t = TempoTracker::new();
+        for i in 0..600 {
+            t.on_tick(i as f64 / 60.0, false);
+        }
+        assert!(t.bpm().is_none());
+        assert!(t.phase().is_none());
     }
 }

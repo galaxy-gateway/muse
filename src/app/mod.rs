@@ -1003,6 +1003,8 @@ impl App {
             scope_peak,
             beat: self.beat.pulse(),
             beat_bands: self.beat.bands(),
+            tempo_phase: self.beat.tempo_phase(),
+            bpm: self.beat.bpm(),
             tuning: self.tunings[self.theme_idx],
             cursor_row,
             cursor_index,

@@ -186,6 +186,12 @@ pub struct FrameCtx {
     pub beat: f32,
     /// Per-band onset pulses `[bass, mid, treble]`, each 0..1.
     pub beat_bands: [f32; 3],
+    /// Locked beat phase 0..1 (0 = on the beat, rising toward the next), or
+    /// `None` until the tempo tracker trusts its estimate. Lets effects
+    /// anticipate beats instead of reacting to them.
+    pub tempo_phase: Option<f32>,
+    /// Estimated tempo (BPM) when locked.
+    pub bpm: Option<f32>,
     /// The active theme's user-tuned knob values.
     pub tuning: Tuning,
     /// Selection's visible row within the tree's inner area (sel - scroll), if any.
