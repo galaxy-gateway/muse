@@ -372,6 +372,24 @@ impl App {
                 self.refresh_palette();
                 self.persist();
             }
+            // No-motion: keep the palette, park the animation. Lingering
+            // particles are dropped so nothing invisible keeps ticking.
+            KeyCode::Char('m') => {
+                self.no_motion = !self.no_motion;
+                self.theme.effect = self.active_effect();
+                self.theme_target.effect = self.theme.effect;
+                self.sim.sparks.clear();
+                self.persist();
+            }
+            // Master effect level: calm every theme down or amp them all up.
+            KeyCode::Char('[') => {
+                self.master_intensity = (self.master_intensity - 0.05).max(0.0);
+                self.persist();
+            }
+            KeyCode::Char(']') => {
+                self.master_intensity = (self.master_intensity + 0.05).min(1.0);
+                self.persist();
+            }
             KeyCode::Enter => self.theme_confirm(),
             KeyCode::Esc | KeyCode::Char('q') => self.theme_cancel(),
             _ => {}

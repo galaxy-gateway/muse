@@ -62,17 +62,24 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     };
 
     let list_hint = if !configurable {
-        "↑↓ pick · a art tint · ⏎ apply · esc"
+        "↑↓ pick · a art · m motion · [] level · ⏎"
     } else if app.theme_config {
         "↑↓ pick · tab back"
     } else {
-        "↑↓ pick · tab tune · a art · ⏎ · esc"
+        "↑↓ pick · tab tune · a art · m motion · [] level · ⏎"
     };
-    let title = if app.adaptive {
-        "theme · art tint on"
-    } else {
-        "theme"
-    };
+    // Title surfaces the global modifiers so their state is never hidden.
+    let mut title = String::from("theme");
+    if app.adaptive {
+        title.push_str(" · art tint");
+    }
+    if app.no_motion {
+        title.push_str(" · no motion");
+    }
+    if (app.master_intensity - 0.5).abs() > f32::EPSILON {
+        title.push_str(&format!(" · level {:.0}%", app.master_intensity * 200.0));
+    }
+    let title = title.as_str();
     let list = List::new(items)
         .block(
             panel_hint(

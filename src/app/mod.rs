@@ -147,6 +147,13 @@ pub struct App {
     /// Adaptive palette: retint the active theme from the now-playing track's
     /// cover art. Toggled with `a` in the theme modal; persisted.
     pub(super) adaptive: bool,
+    /// Master effect level applied on top of every theme's own tuning:
+    /// 0.5 = neutral, below calms every animated theme, above amps them.
+    /// Adjusted with `[`/`]` in the theme modal; persisted.
+    pub(super) master_intensity: f32,
+    /// Accessibility: keep any palette but force the static (no-op) effect.
+    /// Toggled with `m` in the theme modal; persisted.
+    pub(super) no_motion: bool,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -350,6 +357,8 @@ impl App {
             theme_fade: None,
             theme_target: THEMES[theme_idx],
             adaptive: settings.adaptive_palette.unwrap_or(false),
+            master_intensity: settings.master_intensity.unwrap_or(0.5).clamp(0.0, 1.0),
+            no_motion: settings.no_motion.unwrap_or(false),
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -459,6 +468,10 @@ impl App {
             }
         });
 
+        // No-motion restored from settings must replace the effect before the
+        // first frame (set_theme applies it on later switches).
+        app.theme.effect = app.active_effect();
+        app.theme_target.effect = app.theme.effect;
         app.on_selection_changed();
         app.restore_session(&settings);
         Ok(app)
@@ -535,6 +548,8 @@ impl App {
             scope_preset: Some(self.scope_preset().name.to_string()),
             theme: Some(THEMES[self.theme_idx].name.to_string()),
             adaptive_palette: Some(self.adaptive),
+            master_intensity: Some(self.master_intensity),
+            no_motion: Some(self.no_motion),
             gapless: Some(self.gapless),
             shuffle: Some(self.shuffle),
             session_track: self.now_playing.as_ref().map(p2s),
@@ -678,13 +693,46 @@ impl App {
 
     /// Current beat onset pulse (0..1) for border animation. Scaled by the active
     /// theme's beat-sync knob so a theme with beat-sync 0 gets a still border.
+    /// The effect the current theme should actually run: the theme's own, or
+    /// the static no-op when no-motion is on.
+    pub(super) fn active_effect(&self) -> &'static dyn crate::effects::ThemeEffect {
+        if self.no_motion {
+            &crate::effects::NONE
+        } else {
+            THEMES[self.theme_idx].effect
+        }
+    }
+
+    /// The active theme's tuning with the master effect level applied on top
+    /// (0.5 = neutral). This is what reaches effects via `FrameCtx`; the knob
+    /// editor keeps showing the raw per-theme values.
+    pub(super) fn scaled_tuning(&self) -> Tuning {
+        use crate::effects::Knob;
+        let mut t = self.tunings[self.theme_idx];
+        let f = self.master_intensity * 2.0;
+        if (f - 1.0).abs() > f32::EPSILON {
+            for k in [
+                Knob::Intensity,
+                Knob::Speed,
+                Knob::Density,
+                Knob::BeatSync,
+                Knob::Wind,
+                Knob::Disruption,
+                Knob::Strobe,
+            ] {
+                t.set(k, (t.get(k) * f).clamp(0.0, 1.0));
+            }
+        }
+        t
+    }
+
     /// Switch to theme `idx` with a short palette crossfade instead of a snap.
     /// The blend starts from whatever palette is currently displayed (so a
     /// switch mid-fade stays continuous); the effect changes immediately.
     pub(super) fn set_theme(&mut self, idx: usize) {
         self.theme_idx = idx;
         // The effect must switch NOW even though colors glide.
-        self.theme.effect = THEMES[idx].effect;
+        self.theme.effect = self.active_effect();
         self.refresh_palette();
     }
 
@@ -693,7 +741,7 @@ impl App {
     /// toward it if it isn't already where we're headed.
     pub(super) fn refresh_palette(&mut self) {
         let base = THEMES[self.theme_idx];
-        let target = if self.adaptive {
+        let mut target = if self.adaptive {
             self.now_playing
                 .as_ref()
                 .and_then(|np| self.wave_art.get(np))
@@ -704,6 +752,8 @@ impl App {
         } else {
             base
         };
+        target.effect = self.active_effect();
+        self.theme_target.effect = target.effect;
         if !pal_eq(&target, &self.theme_target) {
             let from = self.theme;
             self.theme_target = target;
@@ -729,7 +779,7 @@ impl App {
     }
 
     pub fn beat_pulse(&self) -> f32 {
-        self.beat.pulse() * self.tunings[self.theme_idx].beat_sync
+        self.beat.pulse() * self.scaled_tuning().beat_sync
     }
 
     /// Whether `p` lives inside the current root directory. Compares canonical
@@ -1081,7 +1131,7 @@ impl App {
             tempo_phase: self.beat.tempo_phase(),
             tempo_phase2: self.beat.tempo_phase2(),
             bpm: self.beat.bpm(),
-            tuning: self.tunings[self.theme_idx],
+            tuning: self.scaled_tuning(),
             cursor_row,
             cursor_index,
             play_frac,

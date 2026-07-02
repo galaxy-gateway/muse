@@ -525,6 +525,10 @@ pub struct Settings {
     pub theme: Option<String>,
     /// Retint the active theme from the now-playing cover art. Defaults off.
     pub adaptive_palette: Option<bool>,
+    /// Master effect level on top of per-theme tunings (0.5 = neutral).
+    pub master_intensity: Option<f32>,
+    /// Accessibility: force the static effect while keeping any palette.
+    pub no_motion: Option<bool>,
     /// Gapless cross-track playback (prefetch + sample-accurate splice).
     /// `None` (absent in the file) defaults to on.
     pub gapless: Option<bool>,
