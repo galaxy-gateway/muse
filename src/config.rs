@@ -461,6 +461,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x04, 0x16, 0x0c),
         effect: &crate::effects::RADAR,
     },
+    Theme {
+        name: "neon sign",
+        accent: rgb(0xff, 0x5a, 0xd8),
+        accent2: rgb(0x5a, 0xd8, 0xff),
+        dir: rgb(0xc0, 0x6a, 0xd8),
+        media: rgb(0xf0, 0xd8, 0xec),
+        dim: rgb(0x6e, 0x44, 0x66),
+        scope: rgb(0x5a, 0xd8, 0xff),
+        wave: rgb(0x9a, 0x4a, 0x8a),
+        playing: rgb(0xff, 0xd8, 0xf4),
+        bg_sel: rgb(0x1c, 0x08, 0x18),
+        effect: &crate::effects::NEON,
+    },
 ];
 
 impl Default for Theme {
