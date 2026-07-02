@@ -53,6 +53,24 @@ impl ThemeEffect for Crt {
         crate::color::scale(base, (hum + beat as f64 * 0.25).min(1.15) * drop)
     }
 
+    fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
+        // Heat radiates from the playhead on a hit — the waveform glows like
+        // the beam is burning it in. The played side stays warm phosphor.
+        let pulse = (ctx.routed_beat() * ctx.tuning.beat_sync) as f64;
+        let hot = if let Some(p) = ctx.play_frac {
+            let d = (frac - p).abs();
+            (pulse * (1.0 - d * 6.0)).max(0.0)
+        } else {
+            0.0
+        };
+        let warm = crate::color::mix(base, Color::Rgb(0xff, 0xd7, 0x66), hot * 0.8);
+        if played {
+            warm
+        } else {
+            crate::color::scale(warm, 0.7)
+        }
+    }
+
     fn on_nav(&self, sim: &mut ParticleSim, ctx: &FrameCtx, _dir: f32) {
         // Phosphor afterglow: mark the cursor row; overlay tints those cells
         // toward amber as they age out. Zero velocity — afterglow stays put.

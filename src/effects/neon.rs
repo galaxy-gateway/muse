@@ -48,6 +48,17 @@ impl ThemeEffect for Neon {
         scale(base, (stutter + beat as f64 * 0.2).min(1.1))
     }
 
+    fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
+        // The waveform is a neon strip: per-segment gas noise, buzzing toward
+        // the tube color on a hit.
+        let seg = (frac * 48.0) as u32;
+        let n = (noise(ctx.frame as u32 / 5, seg * 17) % 100) as f64 / 100.0;
+        let buzz = (ctx.routed_beat() * ctx.tuning.beat_sync) as f64;
+        let lum = 0.65 + 0.35 * n + buzz * 0.25;
+        let lit = mix(scale(base, lum.min(1.0)), TUBE, buzz * 0.4);
+        if played { lit } else { scale(lit, 0.7) }
+    }
+
     fn overlay(&self, f: &mut Frame, _sim: &ParticleSim, ctx: &FrameCtx) {
         let r = ctx.np_rect;
         if r.width < 6 || r.height < 3 {

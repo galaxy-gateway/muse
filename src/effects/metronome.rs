@@ -35,6 +35,17 @@ impl ThemeEffect for Metronome {
         scale(base, (breathe + beat as f64 * 0.18).min(1.05))
     }
 
+    fn wave_tint(&self, base: Color, ctx: &FrameCtx, _frac: f64, played: bool) -> Color {
+        // Anticipation: the whole waveform brightens as the next beat
+        // approaches (phase rising toward 1) and relaxes right after it.
+        let glow = match ctx.tempo_phase {
+            Some(p) => (p as f64).powi(3) * 0.35 * ctx.tuning.beat_sync as f64,
+            None => 0.0,
+        };
+        let lit = scale(base, 0.85 + glow);
+        if played { lit } else { scale(lit, 0.75) }
+    }
+
     fn overlay(&self, f: &mut Frame, _sim: &ParticleSim, ctx: &FrameCtx) {
         let r = ctx.transport_rect;
         if r.width < 12 || r.height < 3 {

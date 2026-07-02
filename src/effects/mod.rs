@@ -313,6 +313,14 @@ pub trait ThemeEffect: Sync {
     fn wind(&self, _ctx: &FrameCtx) -> Option<f32> {
         None
     }
+
+    /// Per-column tint of the waveform panel: `frac` is the column's position
+    /// across the track (0..1) and `played` whether it sits behind the
+    /// playhead. Lets a theme make the waveform itself a subtle visualizer;
+    /// the default keeps the theme's static wave color.
+    fn wave_tint(&self, base: Color, _ctx: &FrameCtx, _frac: f64, _played: bool) -> Color {
+        base
+    }
 }
 
 /// Draw every live particle with `glyph(age_fraction, seed)`. Shared by the

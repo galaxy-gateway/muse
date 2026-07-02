@@ -277,6 +277,10 @@ fn draw_waveform(
     };
 
     let inner_w = area.width.saturating_sub(2).max(1) as f64;
+    // Snapshot for the theme's per-column wave tint (FrameCtx is Copy; the
+    // paint closure is `move`).
+    let fx = t.effect;
+    let fx_ctx = app.frame_ctx();
     let canvas = Canvas::default()
         .block(block)
         .marker(Marker::Braille)
@@ -298,12 +302,14 @@ fn draw_waveform(
                     let bi = c * n / cols.max(1);
                     let (lo, hi) = bins[bi.min(n - 1)];
                     let x = c as f64 / 2.0;
+                    let frac = c as f64 / cols.max(1) as f64;
+                    let played = progress >= 0.0 && frac <= progress;
                     ctx.draw(&CLine {
                         x1: x,
                         y1: lo as f64,
                         x2: x,
                         y2: hi as f64,
-                        color: t.wave,
+                        color: fx.wave_tint(t.wave, &fx_ctx, frac, played),
                     });
                 }
                 if progress >= 0.0 {

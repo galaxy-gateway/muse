@@ -55,6 +55,16 @@ impl ThemeEffect for Tide {
         scale(base, (lap + beat as f64 * 0.2).min(1.1))
     }
 
+    fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
+        // The waveform is water too: a slow brightness swell travels along it,
+        // lifting toward foam on a bass hit.
+        let t = ctx.frame as f64 * 0.03;
+        let ripple = 0.8 + 0.2 * ((frac * 9.0 - t) * std::f64::consts::TAU * 0.16).sin();
+        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync) as f64;
+        let lifted = mix(scale(base, ripple), FOAM, bass * 0.35);
+        if played { lifted } else { scale(lifted, 0.75) }
+    }
+
     fn wind(&self, ctx: &FrameCtx) -> Option<f32> {
         // A slowly shifting onshore/offshore breeze for the spray.
         let t = ctx.frame as f64 * 0.008;
