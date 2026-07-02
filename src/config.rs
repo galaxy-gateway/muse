@@ -448,6 +448,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x12, 0x16, 0x08),
         effect: &crate::effects::FIREFLIES,
     },
+    Theme {
+        name: "radar",
+        accent: rgb(0x39, 0xff, 0x8a),
+        accent2: rgb(0x1a, 0x66, 0x40),
+        dir: rgb(0x2a, 0xc0, 0x6a),
+        media: rgb(0xc8, 0xf0, 0xd8),
+        dim: rgb(0x2a, 0x54, 0x3c),
+        scope: rgb(0x39, 0xff, 0x8a),
+        wave: rgb(0x28, 0x8a, 0x52),
+        playing: rgb(0xd8, 0xff, 0xe8),
+        bg_sel: rgb(0x04, 0x16, 0x0c),
+        effect: &crate::effects::RADAR,
+    },
 ];
 
 impl Default for Theme {
