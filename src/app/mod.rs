@@ -136,6 +136,10 @@ pub struct App {
     /// Arm a one-shot malloc pressure-relief sweep ~2s after a burst settles,
     /// so the allocator's freed-but-dirty pages return to the OS promptly.
     pub(super) relief_want: Option<Instant>,
+    /// In-flight palette crossfade: (palette we came FROM, start time). While
+    /// set, each tick re-blends `theme`'s colors toward `THEMES[theme_idx]`;
+    /// the effect pointer switches immediately (behaviors can't be blended).
+    pub(super) theme_fade: Option<(crate::config::Theme, Instant)>,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -336,6 +340,7 @@ impl App {
             open_want: None,
             last_open_req: None,
             relief_want: None,
+            theme_fade: None,
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -663,6 +668,35 @@ impl App {
 
     /// Current beat onset pulse (0..1) for border animation. Scaled by the active
     /// theme's beat-sync knob so a theme with beat-sync 0 gets a still border.
+    /// Switch to theme `idx` with a short palette crossfade instead of a snap.
+    /// The blend starts from whatever palette is currently displayed (so a
+    /// switch mid-fade stays continuous); the effect changes immediately.
+    pub(super) fn set_theme(&mut self, idx: usize) {
+        if idx == self.theme_idx && self.theme_fade.is_none() {
+            return;
+        }
+        let from = self.theme;
+        self.theme_idx = idx;
+        self.theme = blend_theme(&from, &THEMES[idx], 0.0);
+        self.theme_fade = Some((from, Instant::now()));
+    }
+
+    /// Advance the palette crossfade one tick (see `theme_fade`).
+    fn tick_theme_fade(&mut self) {
+        const FADE_MS: f64 = 300.0;
+        if let Some((from, start)) = &self.theme_fade {
+            let t = start.elapsed().as_millis() as f64 / FADE_MS;
+            if t >= 1.0 {
+                self.theme = THEMES[self.theme_idx];
+                self.theme_fade = None;
+            } else {
+                // Smoothstep: ease both ends of the fade.
+                let e = t * t * (3.0 - 2.0 * t);
+                self.theme = blend_theme(from, &THEMES[self.theme_idx], e);
+            }
+        }
+    }
+
     pub fn beat_pulse(&self) -> f32 {
         self.beat.pulse() * self.tunings[self.theme_idx].beat_sync
     }
@@ -805,6 +839,7 @@ impl App {
                 self.check_track_end();
                 self.sync_media_playback();
                 self.sync_stream_waveform();
+                self.tick_theme_fade();
                 // Trailing edge of the burst-Open debounce: presses stopped —
                 // open the surviving track. Placed after sync_stream_waveform
                 // so its open_want guard covers the tick the Open is sent on
@@ -892,7 +927,11 @@ impl App {
                 self.sim.update(ctx.screen, wind);
                 // Compute idle state: not playing, theme is not animated, no particles.
                 let prev_idle = self.idle;
-                self.idle = !self.engine.is_playing() && !fx.is_animated() && self.sim.is_empty();
+                self.idle = !self.engine.is_playing()
+                    && !fx.is_animated()
+                    && self.sim.is_empty()
+                    // A palette crossfade must keep redrawing to be visible.
+                    && self.theme_fade.is_none();
                 self.idle_flag.store(self.idle, Ordering::Relaxed);
                 if !prev_idle && self.idle {
                     // Just became idle; draw once more to settle the final frame.
@@ -1012,6 +1051,29 @@ impl App {
             cursor_index,
             play_frac,
         }
+    }
+}
+
+/// Blend two theme palettes at `t` (0 = all `from`, 1 = all `to`). The effect
+/// pointer is always `to`'s — behaviors switch instantly, colors glide.
+fn blend_theme(
+    from: &crate::config::Theme,
+    to: &crate::config::Theme,
+    t: f64,
+) -> crate::config::Theme {
+    use crate::color::mix;
+    crate::config::Theme {
+        name: to.name,
+        accent: mix(from.accent, to.accent, t),
+        accent2: mix(from.accent2, to.accent2, t),
+        dir: mix(from.dir, to.dir, t),
+        media: mix(from.media, to.media, t),
+        dim: mix(from.dim, to.dim, t),
+        scope: mix(from.scope, to.scope, t),
+        wave: mix(from.wave, to.wave, t),
+        playing: mix(from.playing, to.playing, t),
+        bg_sel: mix(from.bg_sel, to.bg_sel, t),
+        effect: to.effect,
     }
 }
 

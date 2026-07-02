@@ -248,8 +248,7 @@ impl App {
     }
 
     fn apply_preview(&mut self) {
-        self.theme_idx = self.theme_sel;
-        self.theme = THEMES[self.theme_idx];
+        self.set_theme(self.theme_sel);
     }
 
     fn theme_confirm(&mut self) {
@@ -260,8 +259,7 @@ impl App {
     }
 
     fn theme_cancel(&mut self) {
-        self.theme_idx = self.theme_prev;
-        self.theme = THEMES[self.theme_idx];
+        self.set_theme(self.theme_prev);
         self.show_theme = false;
         self.theme_config = false;
         // Knob edits are applied + saved live, so they are intentionally kept.
