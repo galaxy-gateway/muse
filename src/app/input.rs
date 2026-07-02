@@ -280,10 +280,21 @@ impl App {
         let Some(&k) = knobs.get(self.config_sel) else {
             return; // on the "reset" row — nothing to nudge
         };
-        let next = if k.kind() == crate::effects::KnobKind::Toggle {
-            if delta > 0.0 { 1.0 } else { 0.0 }
-        } else {
-            self.tunings[self.theme_sel].get(k) + delta
+        let next = match k.kind() {
+            crate::effects::KnobKind::Toggle => {
+                if delta > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            // Choices step one option per press, clamped at the ends.
+            crate::effects::KnobKind::Choice(opts) => {
+                let n = (opts.len() - 1).max(1) as f32;
+                let idx = (self.tunings[self.theme_sel].get(k) * n).round();
+                (idx + delta.signum()).clamp(0.0, n) / n
+            }
+            crate::effects::KnobKind::Range => self.tunings[self.theme_sel].get(k) + delta,
         };
         self.tunings[self.theme_sel].set(k, next);
         self.persist();

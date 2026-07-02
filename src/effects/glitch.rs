@@ -27,7 +27,7 @@ pub struct Glitch;
 
 impl ThemeEffect for Glitch {
     fn knobs(&self) -> &'static [Knob] {
-        &[Knob::Intensity, Knob::Disruption]
+        &[Knob::Intensity, Knob::Disruption, Knob::BeatSource]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -59,7 +59,8 @@ impl ThemeEffect for Glitch {
             return;
         }
 
-        let beat = ctx.beat.clamp(0.0, 1.0);
+        // The routed pulse (full-band by default; route to bass for kicks only).
+        let beat = ctx.routed_beat().clamp(0.0, 1.0);
         // Purely beat-driven: between beats (and on silence) the screen is clean.
         // No sustained fizz — the glitch only exists as a reaction to a hit.
         const GATE: f32 = 0.18;

@@ -25,6 +25,7 @@ impl ThemeEffect for Crt {
             Knob::Speed,
             Knob::Persistence,
             Knob::BeatSync,
+            Knob::BeatSource,
         ]
     }
 
@@ -34,6 +35,7 @@ impl ThemeEffect for Crt {
             speed: 0.4,
             persistence: 0.5,
             beat_sync: 0.5,
+            beat_source: 1.0 / 3.0, // bass drives the tube
             ..Default::default()
         }
     }
@@ -84,9 +86,10 @@ impl ThemeEffect for Crt {
         }
         let intensity = ctx.tuning.intensity as f64;
         let speed = ctx.tuning.speed as f64;
-        // Bass drives the tube: brighten on a kick, and past a strong hit the
-        // whole picture sags for a frame like the supply dipped.
-        let bass = (ctx.beat_bands[0] * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
+        // The routed band drives the tube (bass by default): brighten on a
+        // kick, and past a strong hit the whole picture sags for a frame like
+        // the supply dipped.
+        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
         let sag = if bass > 0.75 && ctx.frame.is_multiple_of(2) {
             0.88
         } else {

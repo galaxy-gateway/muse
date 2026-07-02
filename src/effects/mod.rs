@@ -50,6 +50,9 @@ pub enum KnobKind {
     Range,
     /// Boolean, stored as 0.0/1.0, shown as `on`/`off`.
     Toggle,
+    /// One of N labeled options, stored as index/(N-1) so it round-trips
+    /// through the same 0..1 f32 persistence as every other knob.
+    Choice(&'static [&'static str]),
 }
 
 /// One user-tunable knob on a configurable theme. Values live on `Tuning` (all
@@ -75,7 +78,13 @@ pub enum Knob {
     Strobe,
     /// Toggle: particles chase the mouse pointer (sakura).
     FollowMouse,
+    /// Which band drives the theme's beat reactions: all / bass / mid / treble.
+    /// Read through `FrameCtx::routed_beat`.
+    BeatSource,
 }
+
+/// Option labels for the `BeatSource` choice knob, in stored-value order.
+pub const BEAT_SOURCES: &[&str] = &["all", "bass", "mid", "treble"];
 
 impl Knob {
     pub fn label(self) -> &'static str {
@@ -89,12 +98,14 @@ impl Knob {
             Knob::Disruption => "disruption",
             Knob::Strobe => "strobe",
             Knob::FollowMouse => "follow mouse",
+            Knob::BeatSource => "beat source",
         }
     }
 
     pub fn kind(self) -> KnobKind {
         match self {
             Knob::FollowMouse => KnobKind::Toggle,
+            Knob::BeatSource => KnobKind::Choice(BEAT_SOURCES),
             _ => KnobKind::Range,
         }
     }
@@ -114,6 +125,7 @@ pub struct Tuning {
     pub disruption: f32,
     pub strobe: f32,
     pub follow_mouse: f32,
+    pub beat_source: f32,
 }
 
 impl Default for Tuning {
@@ -128,6 +140,7 @@ impl Default for Tuning {
             disruption: 0.5,
             strobe: 0.5,
             follow_mouse: 1.0,
+            beat_source: 0.0, // "all"
         }
     }
 }
@@ -144,15 +157,26 @@ impl Tuning {
             Knob::Disruption => self.disruption,
             Knob::Strobe => self.strobe,
             Knob::FollowMouse => self.follow_mouse,
+            Knob::BeatSource => self.beat_source,
         }
     }
 
     pub fn set(&mut self, k: Knob, v: f32) {
-        // Snap toggles to 0/1 so stored values stay clean.
-        let v = if k.kind() == KnobKind::Toggle {
-            if v >= 0.5 { 1.0 } else { 0.0 }
-        } else {
-            v.clamp(0.0, 1.0)
+        // Snap toggles to 0/1 and choices to their detents, so stored values
+        // stay clean.
+        let v = match k.kind() {
+            KnobKind::Toggle => {
+                if v >= 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            KnobKind::Choice(opts) => {
+                let n = (opts.len() - 1).max(1) as f32;
+                (v.clamp(0.0, 1.0) * n).round() / n
+            }
+            KnobKind::Range => v.clamp(0.0, 1.0),
         };
         match k {
             Knob::Intensity => self.intensity = v,
@@ -164,12 +188,24 @@ impl Tuning {
             Knob::Disruption => self.disruption = v,
             Knob::Strobe => self.strobe = v,
             Knob::FollowMouse => self.follow_mouse = v,
+            Knob::BeatSource => self.beat_source = v,
         }
     }
 
     /// Convenience for `Toggle` knobs.
     pub fn is_on(self, k: Knob) -> bool {
         self.get(k) >= 0.5
+    }
+
+    /// The selected index of a `Choice` knob.
+    pub fn choice(self, k: Knob) -> usize {
+        match k.kind() {
+            KnobKind::Choice(opts) => {
+                let n = (opts.len() - 1).max(1) as f32;
+                (self.get(k) * n).round() as usize
+            }
+            _ => 0,
+        }
     }
 }
 
@@ -210,6 +246,21 @@ pub struct FrameCtx {
     pub cursor_index: Option<u32>,
     /// Playhead fraction (0..1) when a track is playing, else `None`.
     pub play_frac: Option<f64>,
+}
+
+impl FrameCtx {
+    /// The onset pulse the user routed this theme to via the `BeatSource`
+    /// knob: the full-band pulse ("all", the default) or one of the bands.
+    /// Raw (NOT beat-sync scaled) so it's a drop-in for `self.beat` /
+    /// `self.beat_bands[i]` — themes keep applying their own beat-sync knob.
+    pub fn routed_beat(&self) -> f32 {
+        match self.tuning.choice(Knob::BeatSource) {
+            1 => self.beat_bands[0],
+            2 => self.beat_bands[1],
+            3 => self.beat_bands[2],
+            _ => self.beat,
+        }
+    }
 }
 
 /// One animated theme's behavior. Every hook has a no-op/identity default, so an

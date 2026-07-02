@@ -24,6 +24,7 @@ impl ThemeEffect for Fireflies {
             Knob::Density,
             Knob::Speed,
             Knob::BeatSync,
+            Knob::BeatSource,
             Knob::FollowMouse,
         ]
     }
@@ -33,6 +34,7 @@ impl ThemeEffect for Fireflies {
             density: 0.5,
             speed: 0.35,
             beat_sync: 0.6,
+            beat_source: 1.0, // treble sparkles the field
             follow_mouse: 1.0,
             ..Default::default()
         }
@@ -106,7 +108,7 @@ impl ThemeEffect for Fireflies {
             return;
         }
         // Treble makes the whole field flare together for a few frames.
-        let treble = (ctx.beat_bands[2] * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
+        let treble = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
         let buf = f.buffer_mut();
         for p in &sim.sparks {
             let (x, y) = (p.x.round() as i32, p.y.round() as i32);

@@ -559,6 +559,7 @@ pub struct TuningCfg {
     pub disruption: Option<f32>,
     pub strobe: Option<f32>,
     pub follow_mouse: Option<f32>,
+    pub beat_source: Option<f32>,
 }
 
 impl TuningCfg {
@@ -591,6 +592,9 @@ impl TuningCfg {
         if let Some(v) = self.follow_mouse {
             t.follow_mouse = v;
         }
+        if let Some(v) = self.beat_source {
+            t.beat_source = v;
+        }
     }
 
     /// Snapshot a live `Tuning` for persistence.
@@ -605,6 +609,7 @@ impl TuningCfg {
             disruption: Some(t.disruption),
             strobe: Some(t.strobe),
             follow_mouse: Some(t.follow_mouse),
+            beat_source: Some(t.beat_source),
         }
     }
 }

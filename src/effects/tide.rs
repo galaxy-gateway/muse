@@ -29,7 +29,13 @@ fn surface(x: u16, frame: u64, swell: f64, intensity: f64) -> f64 {
 
 impl ThemeEffect for Tide {
     fn knobs(&self) -> &'static [Knob] {
-        &[Knob::Intensity, Knob::Density, Knob::Wind, Knob::BeatSync]
+        &[
+            Knob::Intensity,
+            Knob::Density,
+            Knob::Wind,
+            Knob::BeatSync,
+            Knob::BeatSource,
+        ]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -38,6 +44,7 @@ impl ThemeEffect for Tide {
             density: 0.5,
             wind: 0.4,
             beat_sync: 0.6,
+            beat_source: 1.0 / 3.0, // bass swells the water
             ..Default::default()
         }
     }
@@ -59,7 +66,7 @@ impl ThemeEffect for Tide {
         if area.width < 8 || area.height < 10 {
             return;
         }
-        let bass = (ctx.beat_bands[0] * ctx.tuning.beat_sync).clamp(0.0, 1.0);
+        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0);
         // Gentle ambient spume plus a burst on a bass crest.
         let base_rate = if ctx.frame.is_multiple_of(6) { 1 } else { 0 };
         let n = base_rate + (bass * 5.0 * ctx.tuning.density) as u32;
@@ -94,7 +101,7 @@ impl ThemeEffect for Tide {
         if area.width < 8 || area.height < 10 {
             return;
         }
-        let bass = (ctx.beat_bands[0] * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
+        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
         let swell = bass * 3.0;
         let intensity = ctx.tuning.intensity as f64;
         let floor = ctx.transport_rect.y; // water sits above the transport bar

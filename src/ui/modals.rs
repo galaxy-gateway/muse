@@ -117,22 +117,34 @@ fn draw_theme_editor(f: &mut Frame, app: &App, area: Rect, knobs: &[crate::effec
             format!("{marker}{}", k.label()),
             Style::default().fg(label_col),
         )));
-        // Toggle knobs show on/off; range knobs a bar + value.
-        if k.kind() == crate::effects::KnobKind::Toggle {
-            let on = v >= 0.5;
-            let (txt, col) = if on {
-                ("  ● on", bar_col)
-            } else {
-                ("  ○ off", t.dim)
-            };
-            lines.push(Line::from(Span::styled(txt, Style::default().fg(col))));
-        } else {
-            let filled = (v * cells as f32).round() as usize;
-            let bar: String = "█".repeat(filled) + &"░".repeat(cells - filled);
-            lines.push(Line::from(vec![
-                Span::styled(format!(" {bar}"), Style::default().fg(bar_col)),
-                Span::styled(format!(" {v:.2}"), Style::default().fg(t.dim)),
-            ]));
+        // Toggle knobs show on/off; choices the selected option; range knobs
+        // a bar + value.
+        match k.kind() {
+            crate::effects::KnobKind::Toggle => {
+                let on = v >= 0.5;
+                let (txt, col) = if on {
+                    ("  ● on", bar_col)
+                } else {
+                    ("  ○ off", t.dim)
+                };
+                lines.push(Line::from(Span::styled(txt, Style::default().fg(col))));
+            }
+            crate::effects::KnobKind::Choice(opts) => {
+                let idx = tuning.choice(*k).min(opts.len() - 1);
+                lines.push(Line::from(vec![
+                    Span::styled("  ‹ ", Style::default().fg(t.dim)),
+                    Span::styled(opts[idx], Style::default().fg(bar_col)),
+                    Span::styled(" ›", Style::default().fg(t.dim)),
+                ]));
+            }
+            crate::effects::KnobKind::Range => {
+                let filled = (v * cells as f32).round() as usize;
+                let bar: String = "█".repeat(filled) + &"░".repeat(cells - filled);
+                lines.push(Line::from(vec![
+                    Span::styled(format!(" {bar}"), Style::default().fg(bar_col)),
+                    Span::styled(format!(" {v:.2}"), Style::default().fg(t.dim)),
+                ]));
+            }
         }
         lines.push(Line::from(""));
     }

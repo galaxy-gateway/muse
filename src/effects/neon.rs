@@ -19,7 +19,12 @@ pub struct Neon;
 
 impl ThemeEffect for Neon {
     fn knobs(&self) -> &'static [Knob] {
-        &[Knob::Intensity, Knob::Speed, Knob::BeatSync]
+        &[
+            Knob::Intensity,
+            Knob::Speed,
+            Knob::BeatSync,
+            Knob::BeatSource,
+        ]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -27,6 +32,7 @@ impl ThemeEffect for Neon {
             intensity: 0.55,
             speed: 0.5,
             beat_sync: 0.6,
+            beat_source: 1.0 / 3.0, // bass buzzes the gas
             ..Default::default()
         }
     }
@@ -48,7 +54,7 @@ impl ThemeEffect for Neon {
             return;
         }
         let intensity = ctx.tuning.intensity as f64;
-        let buzz = (ctx.beat_bands[0] * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
+        let buzz = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
         // Flicker clock: `speed` sets how fast the noise re-rolls.
         let div = (6.0 - ctx.tuning.speed * 4.0).max(1.0) as u32;
         let tick = ctx.frame as u32 / div;
