@@ -94,3 +94,14 @@ beat-gated/sparse themes). The overlay now draws on every frame that reaches
 the terminal; the saving moved to the main loop, which lowers the paused
 tick-redraw rate to ~15fps (`App::effect_decimate`) so every frame is
 complete and consistent.
+
+Addendum (v0.53.3): two more anti-flash rules. (1) Borders stay STATIC —
+no pre-existing theme animates border brightness, because any modulation
+(smooth or quantized) re-colors every panel edge in lockstep and reads as
+the palette flashing; rare, brief identity accents (crt dropout, neon
+stutter) are fine. Same for whole-screen beat factors (crt's removed) — put
+beat expression in localized overlay elements or wave_tint. (2) The theme
+picker animates ONLY the highlighted row's swatch: running every row's
+border animation at once (v0.53.0) made the list a wall of unsynchronized
+color flashes, and the highlighted theme already previews across the whole
+UI.

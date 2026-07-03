@@ -39,16 +39,11 @@ impl ThemeEffect for Tape {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Motor drift: two slow sines that never line up, so brightness wanders
-        // rather than pulses. Stepped phase + quantized factor keep the border
-        // from being rewritten every frame.
-        let t = (frame / 6) as f64 * 0.12 + offset * 1.7;
-        let drift = 0.86
-            + 0.07 * (t * std::f64::consts::TAU).sin()
-            + 0.05 * (t * 1.618 * std::f64::consts::TAU).sin();
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (drift + beat * 0.18).min(1.1))
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
+        // Steady frame — animated border brightness re-colors every panel
+        // edge in lockstep and reads as the palette flashing. The tape
+        // character lives in the overlay (wobble, hiss, smear).
+        crate::color::qscale(base, 0.9)
     }
 
     fn on_track(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {

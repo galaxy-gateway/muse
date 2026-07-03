@@ -49,12 +49,11 @@ impl ThemeEffect for Tide {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Stepped + quantized so borders lap a few times a second, not 60Hz.
-        let t = (frame / 6) as f64 * 0.09 + offset * 1.3;
-        let lap = 0.84 + 0.10 * (t * std::f64::consts::TAU).sin();
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (lap + beat * 0.2).min(1.1))
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
+        // Steady frame — animated border brightness re-colors every panel
+        // edge in lockstep and reads as the palette flashing; this theme's
+        // character lives in its overlay.
+        crate::color::qscale(base, 0.88)
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {

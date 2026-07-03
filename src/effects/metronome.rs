@@ -28,13 +28,11 @@ impl ThemeEffect for Metronome {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Breathe gently, brightening on the hit — never strobing. Stepped +
-        // quantized so borders re-color a few times a second at most.
-        let t = (frame / 6) as f64 * 0.072 + offset;
-        let breathe = 0.86 + 0.08 * (t * std::f64::consts::TAU).sin();
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (breathe + beat * 0.18).min(1.05))
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
+        // Steady frame — animated border brightness re-colors every panel
+        // edge in lockstep and reads as the palette flashing; this theme's
+        // character lives in its overlay.
+        crate::color::qscale(base, 0.88)
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, _frac: f64, played: bool) -> Color {

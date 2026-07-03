@@ -42,14 +42,11 @@ impl ThemeEffect for Seismograph {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Paper-steady, with a tiny tremor when the signal hits hard.
-        let tremor = if beat > 0.6 {
-            0.9 + (noise(frame as u32, (offset * 53.0) as u32) % 20) as f64 * 0.01
-        } else {
-            1.0
-        };
-        scale(base, 0.9 * tremor)
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
+        // Steady frame — animated border brightness re-colors every panel
+        // edge in lockstep and reads as the palette flashing; this theme's
+        // character lives in its overlay.
+        crate::color::qscale(base, 0.9)
     }
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {

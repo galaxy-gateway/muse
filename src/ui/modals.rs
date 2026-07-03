@@ -32,18 +32,21 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
             } else {
                 "  "
             };
-            // Live preview: the leading cells run the theme's own border
-            // animation (each effect's cheap signature move), phase-offset
-            // per row and pulsing with the real beat — so animated themes can
-            // be compared before committing. Static themes render a plain
-            // palette strip because their border() is the identity.
-            let beat = app.beat_pulse();
-            let live1 = th
-                .effect
-                .border(th.accent, app.frame, i as f64 * 0.13, beat);
-            let live2 = th
-                .effect
-                .border(th.accent2, app.frame, i as f64 * 0.13 + 0.4, beat);
+            // Live preview ONLY on the highlighted row: running every row's
+            // border animation at once turned the list into a wall of
+            // unsynchronized color flashes (glitch-family borders jump to
+            // random colors by design). The highlighted theme also previews
+            // across the whole UI behind the modal, so one animated row is
+            // plenty; every other row shows its static palette.
+            let (live1, live2) = if i == app.theme_sel {
+                let beat = app.beat_pulse();
+                (
+                    th.effect.border(th.accent, app.frame, 0.0, beat),
+                    th.effect.border(th.accent2, app.frame, 0.4, beat),
+                )
+            } else {
+                (th.accent, th.accent2)
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:<15}", th.name), Style::default().fg(th.media)),
                 Span::styled(tag, Style::default().fg(t.dim)),

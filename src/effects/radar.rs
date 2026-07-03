@@ -48,12 +48,11 @@ impl ThemeEffect for Radar {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Stepped + quantized to avoid per-frame border rewrites.
-        let t = (frame / 6) as f64 * 0.12 + offset;
-        let hum = 0.8 + 0.08 * (t * std::f64::consts::TAU).sin();
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (hum + beat * 0.2).min(1.05))
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
+        // Steady frame — animated border brightness re-colors every panel
+        // edge in lockstep and reads as the palette flashing; this theme's
+        // character lives in its overlay.
+        crate::color::qscale(base, 0.84)
     }
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {

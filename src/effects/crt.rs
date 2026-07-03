@@ -40,19 +40,17 @@ impl ThemeEffect for Crt {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // A slow mains-hum breathing, brightening on bass hits. Rare dropouts
-        // sell the failing-tube feel. Phase steps ~10Hz and the factor is
-        // quantized so the border isn't rewritten (and shimmering) every frame.
-        let t = (frame / 6) as f64 * 0.18 + offset * 2.1;
-        let hum = 0.82 + 0.10 * (t * std::f64::consts::TAU).sin();
-        let drop = if noise(frame as u32 / 6, (offset * 97.0) as u32).is_multiple_of(40) {
+    fn border(&self, base: Color, frame: u64, offset: f64, _beat: f32) -> Color {
+        // Steady frame with a RARE one-beat dropout (failing tube). No hum,
+        // no beat coupling: continuously animated borders re-color every
+        // border cell of every panel in lockstep, which reads as the whole
+        // palette flashing. The tube character lives in the overlay.
+        let drop = if noise(frame as u32 / 8, (offset * 97.0) as u32).is_multiple_of(50) {
             0.55
         } else {
             1.0
         };
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (hum + beat * 0.25).min(1.15) * drop)
+        crate::color::qscale(base, 0.9 * drop)
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
@@ -106,15 +104,6 @@ impl ThemeEffect for Crt {
         }
         let intensity = ctx.tuning.intensity as f64;
         let speed = ctx.tuning.speed as f64;
-        // The routed band drives the tube (bass by default): brighten on a
-        // kick. Quantized to coarse steps so the full screen is only
-        // rewritten on real level changes, not on every frame of the pulse's
-        // decay (that read as whole-screen flicker).
-        let bass = crate::color::quant(
-            (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64,
-            4.0,
-        );
-        let global = 1.0 + bass * 0.08;
 
         // Rolling sweep line: a brightened band that takes a few seconds per
         // pass, faster with `speed`.
@@ -151,7 +140,10 @@ impl ThemeEffect for Crt {
                 let dy = (y as f64 + 0.5 - cy) / cy;
                 let rad = (dx * dx + dy * dy).sqrt();
                 let vig = 1.0 - (0.22 * intensity) * ((rad - 0.6).max(0.0) / 0.55).min(1.0);
-                let fct = (mask * sweep * vig * global).clamp(0.3, 1.3);
+                // No whole-screen beat factor: brightening every RGB cell in
+                // lockstep (even quantized) reads as the palette flashing on
+                // each hit. The beat expression lives in wave_tint instead.
+                let fct = (mask * sweep * vig).clamp(0.3, 1.3);
                 cell.set_fg(Color::Rgb(
                     ((r as f64 * fct).min(255.0)) as u8,
                     ((g as f64 * fct).min(255.0)) as u8,

@@ -37,17 +37,16 @@ impl ThemeEffect for Neon {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // The sign's frame hums along, with its own occasional stutter — but
-        // re-rolled ~7Hz and quantized, not per frame.
-        let n = noise(frame as u32 / 9, (offset * 71.0) as u32) % 100;
-        let stutter = if n < 4 {
-            0.5
+    fn border(&self, base: Color, frame: u64, offset: f64, _beat: f32) -> Color {
+        // Steady frame with a RARE brief stutter dip (identity accent, ~every
+        // few seconds per panel) — never a continuous flicker: that re-colors
+        // every panel edge in lockstep and reads as palette flashing.
+        let dip = if noise(frame as u32 / 9, (offset * 71.0) as u32).is_multiple_of(37) {
+            0.55
         } else {
-            0.85 + (n % 12) as f64 * 0.012
+            1.0
         };
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (stutter + beat * 0.2).min(1.1))
+        crate::color::qscale(base, 0.88 * dip)
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {

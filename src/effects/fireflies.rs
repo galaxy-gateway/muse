@@ -40,13 +40,11 @@ impl ThemeEffect for Fireflies {
         }
     }
 
-    fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Deep-dusk borders that shimmer faintly when the treble sparkles.
-        // Stepped + quantized to avoid per-frame border rewrites.
-        let t = (frame / 6) as f64 * 0.06 + offset * 0.9;
-        let dusk = 0.78 + 0.08 * (t * std::f64::consts::TAU).sin();
-        let beat = crate::color::quant(beat as f64, 4.0);
-        crate::color::qscale(base, (dusk + beat * 0.22).min(1.05))
+    fn border(&self, base: Color, _frame: u64, _offset: f64, _beat: f32) -> Color {
+        // Steady frame — animated border brightness re-colors every panel
+        // edge in lockstep and reads as the palette flashing; this theme's
+        // character lives in its overlay.
+        crate::color::qscale(base, 0.82)
     }
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
