@@ -132,7 +132,8 @@ impl ThemeEffect for Seismograph {
             let defl = decode(p.seed);
             let age_f = p.age as f64 / p.life.max(1) as f64;
             let wet = p.age < 3;
-            let fade = (1.0 - age_f * (1.0 - fade_floor)).clamp(0.2, 1.0);
+            // Quantized: drying ink re-colors in steps, not every frame.
+            let fade = crate::color::quant((1.0 - age_f * (1.0 - fade_floor)).clamp(0.2, 1.0), 8.0);
             let col = if wet { INK } else { scale(INK_DRY, fade) };
             // Full pen stroke: vertical run from baseline to the tip, so big
             // hits read as tall strokes rather than floating dots.

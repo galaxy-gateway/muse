@@ -49,9 +49,11 @@ impl ThemeEffect for Radar {
     }
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        let t = frame as f64 * 0.02 + offset;
+        // Stepped + quantized to avoid per-frame border rewrites.
+        let t = (frame / 6) as f64 * 0.12 + offset;
         let hum = 0.8 + 0.08 * (t * std::f64::consts::TAU).sin();
-        scale(base, (hum + beat as f64 * 0.2).min(1.05))
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (hum + beat * 0.2).min(1.05))
     }
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
@@ -143,7 +145,7 @@ impl ThemeEffect for Radar {
             if !inside(x, y) {
                 continue;
             }
-            let fade = 1.0 - p.age as f64 / p.life.max(1) as f64;
+            let fade = crate::color::quant(1.0 - p.age as f64 / p.life.max(1) as f64, 10.0);
             let cell = &mut buf[(x as u16, y as u16)];
             cell.set_char(if fade > 0.66 {
                 '●'

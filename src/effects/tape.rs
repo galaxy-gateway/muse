@@ -41,12 +41,14 @@ impl ThemeEffect for Tape {
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
         // Motor drift: two slow sines that never line up, so brightness wanders
-        // rather than pulses. Beat adds a small transient bump.
-        let t = frame as f64 * 0.02 + offset * 1.7;
+        // rather than pulses. Stepped phase + quantized factor keep the border
+        // from being rewritten every frame.
+        let t = (frame / 6) as f64 * 0.12 + offset * 1.7;
         let drift = 0.86
             + 0.07 * (t * std::f64::consts::TAU).sin()
             + 0.05 * (t * 1.618 * std::f64::consts::TAU).sin();
-        scale(base, (drift + beat as f64 * 0.18).min(1.1))
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (drift + beat * 0.18).min(1.1))
     }
 
     fn on_track(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
@@ -106,14 +108,18 @@ impl ThemeEffect for Tape {
             }
         }
 
-        // --- Tape hiss: sparse dim specks on blank cells only, twinkling per
-        // frame. Never overwrites real glyphs. ---
+        // --- Tape hiss: sparse dim specks on blank cells only, re-rolled a
+        // few times a second (per-frame rerolls read as harsh noise). Never
+        // overwrites real glyphs or the cover image. ---
         let (w, h) = (area.width as u32, area.height as u32);
         let specks = (w * h / 90) * (1 + (intensity * 3.0) as u32);
         for k in 0..specks {
-            let s = noise(ctx.frame as u32 / 2, k.wrapping_mul(0x9E37_79B9));
+            let s = noise(ctx.frame as u32 / 8, k.wrapping_mul(0x9E37_79B9));
             let x = area.x + (s % w) as u16;
             let y = area.y + (s / 7 % h) as u16;
+            if ctx.in_thumb(x, y) {
+                continue;
+            }
             let cell = &mut buf[(x, y)];
             if cell.symbol() == " " {
                 cell.set_char(if s & 8 == 0 { '·' } else { '.' });
@@ -131,7 +137,7 @@ impl ThemeEffect for Tape {
             {
                 continue;
             }
-            let fade = 1.0 - p.age as f64 / p.life.max(1) as f64;
+            let fade = crate::color::quant(1.0 - p.age as f64 / p.life.max(1) as f64, 8.0);
             let cell = &mut buf[(x as u16, y as u16)];
             cell.set_char(if p.age % 3 == 0 { '╌' } else { '─' });
             cell.set_fg(scale(SMEAR, 0.35 + fade * 0.65));

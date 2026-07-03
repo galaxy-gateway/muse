@@ -70,3 +70,19 @@ plus two newer ones:
 3. Single-width glyphs only in overlays (wide chars drift columns).
 4. If beat-reactive, prefer `routed_beat()` + a `BeatSource` knob with a
    default matching the theme's character.
+
+## Flicker discipline (v0.53.1)
+
+Animated color factors must be **stepped and quantized** (`color::qscale` /
+`color::quant`): a per-frame sine or a decaying beat pulse fed straight into
+`scale()` changes every affected cell's RGB every frame, which ratatui
+faithfully rewrites — measured at 320-600k cell updates per 6s for the
+v0.39-0.47 themes vs ~31k for snow, and perceived as whole-UI flicker.
+Quantizing factors to ~1/16 steps and stepping noise/phase clocks to 4-10Hz
+cut the churn 60-80% with no visible loss. Rules of thumb:
+
+- Never alternate on frame parity (strobe); never re-roll noise per frame.
+- Pass brightness factors through `quant`/`qscale` so identical frames map
+  to identical RGB and the diff skips the cell.
+- Full-screen tint loops must skip `FrameCtx::np_thumb` — repainting cells
+  under the graphics-protocol cover image makes the terminal blink it.

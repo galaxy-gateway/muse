@@ -1126,6 +1126,11 @@ impl App {
             wave_rect: self.wave_rect,
             np_rect: self.np_rect,
             transport_rect: self.transport_rect,
+            np_thumb: if self.graphics_capable {
+                self.np_thumb_rect()
+            } else {
+                None
+            },
             hover: self.hover,
             scope_peak,
             beat: self.beat.pulse(),

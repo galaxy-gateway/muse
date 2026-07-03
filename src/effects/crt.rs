@@ -41,22 +41,24 @@ impl ThemeEffect for Crt {
     }
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // A slow mains-hum breathing, brightening on bass hits. Rare one-frame
-        // dropouts sell the failing-tube feel without ever strobing.
-        let t = frame as f64 * 0.03 + offset * 2.1;
+        // A slow mains-hum breathing, brightening on bass hits. Rare dropouts
+        // sell the failing-tube feel. Phase steps ~10Hz and the factor is
+        // quantized so the border isn't rewritten (and shimmering) every frame.
+        let t = (frame / 6) as f64 * 0.18 + offset * 2.1;
         let hum = 0.82 + 0.10 * (t * std::f64::consts::TAU).sin();
-        let drop = if noise(frame as u32, (offset * 97.0) as u32).is_multiple_of(240) {
+        let drop = if noise(frame as u32 / 6, (offset * 97.0) as u32).is_multiple_of(40) {
             0.55
         } else {
             1.0
         };
-        crate::color::scale(base, (hum + beat as f64 * 0.25).min(1.15) * drop)
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (hum + beat * 0.25).min(1.15) * drop)
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
         // Heat radiates from the playhead on a hit — the waveform glows like
         // the beam is burning it in. The played side stays warm phosphor.
-        let pulse = (ctx.routed_beat() * ctx.tuning.beat_sync) as f64;
+        let pulse = crate::color::quant((ctx.routed_beat() * ctx.tuning.beat_sync) as f64, 4.0);
         let hot = if let Some(p) = ctx.play_frac {
             let d = (frac - p).abs();
             (pulse * (1.0 - d * 6.0)).max(0.0)
@@ -105,15 +107,14 @@ impl ThemeEffect for Crt {
         let intensity = ctx.tuning.intensity as f64;
         let speed = ctx.tuning.speed as f64;
         // The routed band drives the tube (bass by default): brighten on a
-        // kick, and past a strong hit the whole picture sags for a frame like
-        // the supply dipped.
-        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
-        let sag = if bass > 0.75 && ctx.frame.is_multiple_of(2) {
-            0.88
-        } else {
-            1.0
-        };
-        let global = (0.98 + bass * 0.12) * sag;
+        // kick. Quantized to coarse steps so the full screen is only
+        // rewritten on real level changes, not on every frame of the pulse's
+        // decay (that read as whole-screen flicker).
+        let bass = crate::color::quant(
+            (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64,
+            4.0,
+        );
+        let global = 1.0 + bass * 0.08;
 
         // Rolling sweep line: a brightened band that takes a few seconds per
         // pass, faster with `speed`.
@@ -137,6 +138,9 @@ impl ThemeEffect for Crt {
                 1.0
             };
             for x in 0..w {
+                if ctx.in_thumb(area.x + x as u16, area.y + y as u16) {
+                    continue; // never repaint under the cover image
+                }
                 let cell = &mut buf[(area.x + x as u16, area.y + y as u16)];
                 let Color::Rgb(r, g, b) = cell.fg else {
                     continue;

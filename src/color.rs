@@ -80,3 +80,17 @@ pub const CMY_STOPS: &[(f64, f64, f64)] = &[
     (229.0, 0.0, 229.0),
     (229.0, 229.0, 0.0),
 ];
+
+/// `scale` with the factor quantized to 1/16 steps. Animated border/overlay
+/// brightness should pass through here: per-frame epsilon changes then map to
+/// the SAME RGB, so ratatui's diff leaves the cell alone instead of rewriting
+/// (and visibly shimmering) every border cell at 60fps.
+pub fn qscale(base: Color, f: f64) -> Color {
+    scale(base, (f * 16.0).round() / 16.0)
+}
+
+/// Quantize any 0..1 factor to `steps` levels (for beat pulses and fades that
+/// would otherwise re-color cells every single frame while they decay).
+pub fn quant(f: f64, steps: f64) -> f64 {
+    (f.clamp(0.0, 1.0) * steps).round() / steps
+}

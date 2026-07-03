@@ -50,17 +50,23 @@ impl ThemeEffect for Tide {
     }
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        let t = frame as f64 * 0.015 + offset * 1.3;
+        // Stepped + quantized so borders lap a few times a second, not 60Hz.
+        let t = (frame / 6) as f64 * 0.09 + offset * 1.3;
         let lap = 0.84 + 0.10 * (t * std::f64::consts::TAU).sin();
-        scale(base, (lap + beat as f64 * 0.2).min(1.1))
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (lap + beat * 0.2).min(1.1))
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
         // The waveform is water too: a slow brightness swell travels along it,
-        // lifting toward foam on a bass hit.
-        let t = ctx.frame as f64 * 0.03;
-        let ripple = 0.8 + 0.2 * ((frac * 9.0 - t) * std::f64::consts::TAU * 0.16).sin();
-        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync) as f64;
+        // lifting toward foam on a bass hit. Stepped + quantized so columns
+        // only re-color on real level changes.
+        let t = (ctx.frame / 6) as f64 * 0.18;
+        let ripple = crate::color::quant(
+            0.8 + 0.2 * ((frac * 9.0 - t) * std::f64::consts::TAU * 0.16).sin(),
+            10.0,
+        );
+        let bass = crate::color::quant((ctx.routed_beat() * ctx.tuning.beat_sync) as f64, 4.0);
         let lifted = mix(scale(base, ripple), FOAM, bass * 0.35);
         if played { lifted } else { scale(lifted, 0.75) }
     }
@@ -111,7 +117,11 @@ impl ThemeEffect for Tide {
         if area.width < 8 || area.height < 10 {
             return;
         }
-        let bass = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
+        // Quantized: a decaying pulse must not re-tint the whole band per frame.
+        let bass = crate::color::quant(
+            (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64,
+            4.0,
+        );
         let swell = bass * 3.0;
         let intensity = ctx.tuning.intensity as f64;
         let floor = ctx.transport_rect.y; // water sits above the transport bar
@@ -120,9 +130,13 @@ impl ThemeEffect for Tide {
         for x in area.x..area.right() {
             let h = surface(x, ctx.frame, swell, intensity).max(0.5);
             let top = (floor as f64 - h).max(area.y as f64 + 1.0) as u16;
-            // Surface chop: bright glyph riding the waterline.
+            if ctx.in_thumb(x, top) {
+                continue; // leave the cover image untouched
+            }
+            // Surface chop: bright glyph riding the waterline; glyph choice
+            // re-rolls a few times a second, not per frame.
             let cell = &mut buf[(x, top)];
-            let s = noise(x as u32, ctx.frame as u32 / 4);
+            let s = noise(x as u32, ctx.frame as u32 / 10);
             // Single-width glyphs only: wide chars here would drift columns.
             cell.set_char(match s % 4 {
                 0 => '~',
@@ -134,8 +148,13 @@ impl ThemeEffect for Tide {
             // Below the waterline: tint existing glyphs toward deep blue, and
             // texture blank cells lightly so the body of water reads as water.
             for y in (top + 1)..floor {
+                if ctx.in_thumb(x, y) {
+                    continue;
+                }
                 let depth = (y - top) as f64 / h.max(1.0);
-                let k = 0.35 + depth * 0.4;
+                // Quantized: the surface height moves every frame, but the
+                // tint of a given cell should only change on real steps.
+                let k = crate::color::quant(0.35 + depth * 0.4, 8.0);
                 let cell = &mut buf[(x, y)];
                 if cell.symbol() == " " {
                     if noise(x as u32 * 31, y as u32 * 17).is_multiple_of(11) {

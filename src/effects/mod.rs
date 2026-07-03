@@ -222,6 +222,11 @@ pub struct FrameCtx {
     pub np_rect: Rect,
     /// Bottom transport bar — the Metronome's pendulum track.
     pub transport_rect: Rect,
+    /// Cells reserved for the now-playing cover thumbnail (graphics-protocol
+    /// image). Full-screen tinting overlays MUST skip these cells: rewriting
+    /// them every frame makes the terminal blink the image (see the
+    /// protocol-image-flicker notes).
+    pub np_thumb: Option<Rect>,
     pub hover: Option<(u16, u16)>,
     /// Peak abs amplitude of the current scope window.
     pub scope_peak: f32,
@@ -260,6 +265,13 @@ impl FrameCtx {
             3 => self.beat_bands[2],
             _ => self.beat,
         }
+    }
+
+    /// Whether a cell belongs to the now-playing cover image — cell-tinting
+    /// overlays must leave those alone or the graphics image blinks.
+    pub fn in_thumb(&self, x: u16, y: u16) -> bool {
+        self.np_thumb
+            .is_some_and(|r| x >= r.x && x < r.right() && y >= r.y && y < r.bottom())
     }
 }
 

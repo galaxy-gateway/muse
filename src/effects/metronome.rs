@@ -29,17 +29,21 @@ impl ThemeEffect for Metronome {
     }
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // Breathe gently, brightening on the hit — never strobing.
-        let t = frame as f64 * 0.012 + offset;
+        // Breathe gently, brightening on the hit — never strobing. Stepped +
+        // quantized so borders re-color a few times a second at most.
+        let t = (frame / 6) as f64 * 0.072 + offset;
         let breathe = 0.86 + 0.08 * (t * std::f64::consts::TAU).sin();
-        scale(base, (breathe + beat as f64 * 0.18).min(1.05))
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (breathe + beat * 0.18).min(1.05))
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, _frac: f64, played: bool) -> Color {
         // Anticipation: the whole waveform brightens as the next beat
         // approaches (phase rising toward 1) and relaxes right after it.
         let glow = match ctx.tempo_phase {
-            Some(p) => (p as f64).powi(3) * 0.35 * ctx.tuning.beat_sync as f64,
+            Some(p) => {
+                crate::color::quant((p as f64).powi(3), 8.0) * 0.35 * ctx.tuning.beat_sync as f64
+            }
             None => 0.0,
         };
         let lit = scale(base, 0.85 + glow);

@@ -42,9 +42,11 @@ impl ThemeEffect for Fireflies {
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
         // Deep-dusk borders that shimmer faintly when the treble sparkles.
-        let t = frame as f64 * 0.01 + offset * 0.9;
+        // Stepped + quantized to avoid per-frame border rewrites.
+        let t = (frame / 6) as f64 * 0.06 + offset * 0.9;
         let dusk = 0.78 + 0.08 * (t * std::f64::consts::TAU).sin();
-        scale(base, (dusk + beat as f64 * 0.22).min(1.05))
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (dusk + beat * 0.22).min(1.05))
     }
 
     fn ambient(&self, sim: &mut ParticleSim, ctx: &FrameCtx) {
@@ -107,8 +109,12 @@ impl ThemeEffect for Fireflies {
         if area.width < 8 || area.height < 6 {
             return;
         }
-        // Treble makes the whole field flare together for a few frames.
-        let treble = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
+        // Treble makes the whole field flare together for a few frames
+        // (quantized so the decay doesn't re-color every fly every frame).
+        let treble = crate::color::quant(
+            (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64,
+            4.0,
+        );
         let buf = f.buffer_mut();
         for p in &sim.sparks {
             let (x, y) = (p.x.round() as i32, p.y.round() as i32);
@@ -119,10 +125,11 @@ impl ThemeEffect for Fireflies {
             {
                 continue;
             }
-            // Each fly blinks on its own slow cycle; treble lifts everyone.
-            let t = (ctx.frame as f64 + (p.seed % 97) as f64 * 3.7) * 0.05;
+            // Each fly blinks on its own slow cycle (stepped ~10Hz); treble
+            // lifts everyone.
+            let t = ((ctx.frame / 6) as f64 + (p.seed % 97) as f64 * 0.62) * 0.3;
             let own = 0.5 + 0.5 * (t * std::f64::consts::TAU).sin();
-            let lum = (own * 0.75 + treble * 0.6).min(1.0);
+            let lum = crate::color::quant((own * 0.75 + treble * 0.6).min(1.0), 10.0);
             // Fade in on spawn and out near end of life.
             let age_f = p.age as f64 / p.life.max(1) as f64;
             let envelope = (age_f * 12.0).min(1.0) * ((1.0 - age_f) * 8.0).min(1.0);

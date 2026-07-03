@@ -38,22 +38,24 @@ impl ThemeEffect for Neon {
     }
 
     fn border(&self, base: Color, frame: u64, offset: f64, beat: f32) -> Color {
-        // The sign's frame hums along, with its own occasional stutter.
-        let n = noise(frame as u32 / 3, (offset * 71.0) as u32) % 100;
+        // The sign's frame hums along, with its own occasional stutter — but
+        // re-rolled ~7Hz and quantized, not per frame.
+        let n = noise(frame as u32 / 9, (offset * 71.0) as u32) % 100;
         let stutter = if n < 4 {
             0.5
         } else {
             0.85 + (n % 12) as f64 * 0.012
         };
-        scale(base, (stutter + beat as f64 * 0.2).min(1.1))
+        let beat = crate::color::quant(beat as f64, 4.0);
+        crate::color::qscale(base, (stutter + beat * 0.2).min(1.1))
     }
 
     fn wave_tint(&self, base: Color, ctx: &FrameCtx, frac: f64, played: bool) -> Color {
-        // The waveform is a neon strip: per-segment gas noise, buzzing toward
-        // the tube color on a hit.
+        // The waveform is a neon strip: per-segment gas noise (re-rolled a few
+        // times a second), buzzing toward the tube color on a hit.
         let seg = (frac * 48.0) as u32;
-        let n = (noise(ctx.frame as u32 / 5, seg * 17) % 100) as f64 / 100.0;
-        let buzz = (ctx.routed_beat() * ctx.tuning.beat_sync) as f64;
+        let n = (noise(ctx.frame as u32 / 10, seg * 17) % 100) as f64 / 100.0;
+        let buzz = crate::color::quant((ctx.routed_beat() * ctx.tuning.beat_sync) as f64, 4.0);
         let lum = 0.65 + 0.35 * n + buzz * 0.25;
         let lit = mix(scale(base, lum.min(1.0)), TUBE, buzz * 0.4);
         if played { lit } else { scale(lit, 0.7) }
@@ -65,9 +67,14 @@ impl ThemeEffect for Neon {
             return;
         }
         let intensity = ctx.tuning.intensity as f64;
-        let buzz = (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64;
-        // Flicker clock: `speed` sets how fast the noise re-rolls.
-        let div = (6.0 - ctx.tuning.speed * 4.0).max(1.0) as u32;
+        // Quantized so a decaying pulse doesn't re-color the sign every frame.
+        let buzz = crate::color::quant(
+            (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64,
+            4.0,
+        );
+        // Flicker clock: `speed` sets how fast the gas noise re-rolls
+        // (~4-12Hz — per-frame rerolls read as harsh strobing).
+        let div = (14.0 - ctx.tuning.speed * 9.0).max(5.0) as u32;
         let tick = ctx.frame as u32 / div;
 
         // Whole-sign dropout: a rare few-frame blackout of the panel.
@@ -77,6 +84,9 @@ impl ThemeEffect for Neon {
         let buf = f.buffer_mut();
         for y in (r.y + 1)..(r.bottom() - 1) {
             for x in (r.x + 1)..(r.right() - 1) {
+                if ctx.in_thumb(x, y) {
+                    continue; // the cover image is not part of the sign
+                }
                 let cell = &mut buf[(x, y)];
                 if cell.symbol() == " " {
                     continue;
