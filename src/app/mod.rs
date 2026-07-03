@@ -679,7 +679,7 @@ impl App {
         use crate::config::WaveView;
         matches!(
             crate::config::WAVE_VIEWS[self.wave_view_idx].0,
-            WaveView::Spectrogram
+            WaveView::Spectrogram | WaveView::Bands | WaveView::Bitrate | WaveView::Dynamics
         )
     }
 

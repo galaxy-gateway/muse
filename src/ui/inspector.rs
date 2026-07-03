@@ -26,6 +26,9 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
             draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true)
         }
         crate::config::WaveView::Spectrogram => draw_spectrogram(f, app, rows[1]),
+        crate::config::WaveView::Bands => draw_bands(f, app, rows[1]),
+        crate::config::WaveView::Bitrate => draw_bitrate(f, app, rows[1]),
+        crate::config::WaveView::Dynamics => draw_dynamics(f, app, rows[1]),
     }
     draw_scope(f, app, rows[2]);
 }
@@ -349,6 +352,242 @@ fn draw_spectrogram(f: &mut Frame, app: &App, area: Rect) {
             cell.set_fg(t.playing);
         }
     }
+}
+
+/// Shared scaffolding for the analysis-backed views: draws the panel block,
+/// bails with a status line when there is nothing to draw, and hands the
+/// inner rect + analysis + playhead progress to the body closure.
+fn with_analysis(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    title: &str,
+    body: impl FnOnce(&mut Frame, &App, Rect, &crate::audio::TrackAnalysis, f64),
+) {
+    let t = &app.theme;
+    let block = panel_hint(
+        title,
+        border(t, app.frame, t.wave, 0.42, app.beat_pulse()),
+        "W next view",
+        t.dim,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 4 || inner.height < 2 {
+        return;
+    }
+    let analysis = app
+        .now_playing
+        .as_ref()
+        .and_then(|p| app.analysis_cache.get(p))
+        .cloned();
+    match analysis {
+        Some(a) => body(f, app, inner, &a, np_progress(app)),
+        None => {
+            let msg = if app.now_playing.is_some() {
+                "analyzing…"
+            } else {
+                "nothing playing"
+            };
+            f.render_widget(
+                Paragraph::new(Span::styled(msg, Style::default().fg(t.dim))),
+                Rect {
+                    x: inner.x + 1,
+                    y: inner.y + inner.height / 2,
+                    width: inner.width.saturating_sub(1),
+                    height: 1,
+                },
+            );
+        }
+    }
+}
+
+/// Draw the playhead column over a filled view.
+fn playhead_column(f: &mut Frame, app: &App, inner: Rect, progress: f64) {
+    if progress < 0.0 || inner.width == 0 {
+        return;
+    }
+    let px = inner.x + ((progress * (inner.width - 1) as f64).round() as u16);
+    let col = app.theme.playing;
+    let buf = f.buffer_mut();
+    for cy in 0..inner.height {
+        let cell = &mut buf[(px, inner.y + cy)];
+        cell.set_char('│');
+        cell.set_fg(col);
+    }
+}
+
+/// Stacked band envelopes: bass / mid / treble as three labeled ribbons, a
+/// mixing-console read of the track. Uses half-block resolution per ribbon.
+fn draw_bands(f: &mut Frame, app: &App, area: Rect) {
+    with_analysis(f, app, area, "bands", |f, app, inner, a, progress| {
+        let t = &app.theme;
+        let n = a.bands.len().max(1);
+        let lane_h = (inner.height / 3).max(1);
+        let colors = [t.accent, t.wave, t.accent2];
+        let labels = ["bass", "mid", "treble"];
+        let buf = f.buffer_mut();
+        for (lane, (label, col)) in labels.iter().zip(colors).enumerate() {
+            let base = inner.y + lane as u16 * lane_h + lane_h - 1;
+            for cx in 0..inner.width {
+                let bi = (cx as usize * n / inner.width as usize).min(n - 1);
+                let e = match lane {
+                    0 => a.bands[bi].0,
+                    1 => a.bands[bi].1,
+                    _ => a.bands[bi].2,
+                } as f64;
+                let is_played =
+                    progress >= 0.0 && (cx as f64 / inner.width as f64) <= progress;
+                let col = if is_played {
+                    col
+                } else {
+                    crate::color::scale(col, 0.5)
+                };
+                // Ribbon height in half-rows.
+                let hh = (e * (lane_h as f64 * 2.0 - 1.0)).round() as u16;
+                for step in 0..hh {
+                    let y = base - step / 2;
+                    if y < inner.y {
+                        break;
+                    }
+                    let cell = &mut buf[(inner.x + cx, y)];
+                    cell.set_char(if step == hh - 1 && step % 2 == 0 {
+                        '▄'
+                    } else {
+                        '█'
+                    });
+                    cell.set_fg(col);
+                }
+            }
+            // Lane label on the left, above the baseline.
+            for (i, ch) in label.chars().enumerate() {
+                let x = inner.x + 1 + i as u16;
+                if x < inner.right() {
+                    let cell = &mut buf[(x, inner.y + lane as u16 * lane_h)];
+                    if cell.symbol() == " " {
+                        cell.set_char(ch);
+                        cell.set_fg(crate::color::scale(col, 0.7));
+                    }
+                }
+            }
+        }
+        playhead_column(f, app, inner, progress);
+    });
+}
+
+/// Bitrate over time (kbps) from compressed packet sizes: a filled area chart
+/// with the track average marked. Near-flat for CBR files — which is honest.
+fn draw_bitrate(f: &mut Frame, app: &App, area: Rect) {
+    with_analysis(f, app, area, "bitrate", |f, app, inner, a, progress| {
+        let t = &app.theme;
+        let Some(kbps) = &a.bitrate else {
+            f.render_widget(
+                Paragraph::new(Span::styled(
+                    "no timing info in this container",
+                    Style::default().fg(t.dim),
+                )),
+                inner,
+            );
+            return;
+        };
+        let n = kbps.len().max(1);
+        let peak = kbps.iter().fold(0.0f32, |m, &v| m.max(v)).max(1.0);
+        let avg = kbps.iter().sum::<f32>() / n as f32;
+        let buf = f.buffer_mut();
+        for cx in 0..inner.width {
+            let bi = (cx as usize * n / inner.width as usize).min(n - 1);
+            let e = (kbps[bi] / peak) as f64;
+            let is_played = progress >= 0.0 && (cx as f64 / inner.width as f64) <= progress;
+            let col = if is_played {
+                t.wave
+            } else {
+                crate::color::scale(t.wave, 0.5)
+            };
+            let hh = (e * (inner.height as f64 * 2.0 - 1.0)).round() as u16;
+            for step in 0..hh {
+                let y = inner.y + inner.height - 1 - step / 2;
+                let cell = &mut buf[(inner.x + cx, y)];
+                cell.set_char(if step == hh.saturating_sub(1) && step % 2 == 0 {
+                    '▄'
+                } else {
+                    '█'
+                });
+                cell.set_fg(col);
+            }
+        }
+        // Average line + labels.
+        let ay = inner.y + inner.height
+            - 1
+            - ((avg / peak) as f64 * (inner.height as f64 - 1.0)).round() as u16;
+        for cx in 0..inner.width {
+            let cell = &mut buf[(inner.x + cx, ay)];
+            if cell.symbol() == " " || cell.symbol() == "█" || cell.symbol() == "▄" {
+                cell.set_char('┈');
+                cell.set_fg(t.playing);
+            }
+        }
+        playhead_column(f, app, inner, progress);
+        // Label drawn last so the playhead never cuts through the numbers.
+        let label = format!(" avg {avg:.0} kbps · peak {peak:.0} ");
+        let buf = f.buffer_mut();
+        for (i, ch) in label.chars().enumerate() {
+            let x = inner.x + 1 + i as u16;
+            if x < inner.right() {
+                let cell = &mut buf[(x, inner.y)];
+                cell.set_char(ch);
+                cell.set_fg(t.media);
+            }
+        }
+    });
+}
+
+/// Dynamics: the RMS loudness curve drawn inside the min/max peak envelope in
+/// a second tone — compressed masters read as RMS hugging the peaks.
+fn draw_dynamics(f: &mut Frame, app: &App, area: Rect) {
+    with_analysis(f, app, area, "dynamics", |f, app, inner, a, progress| {
+        let t = &app.theme;
+        let peaks = app
+            .now_playing
+            .as_ref()
+            .and_then(|p| app.wave_cache.get(p));
+        let n = a.rms.len().max(1);
+        let mid = inner.y as f64 + inner.height as f64 / 2.0;
+        let half = inner.height as f64 / 2.0;
+        let buf = f.buffer_mut();
+        for cx in 0..inner.width {
+            let bi = (cx as usize * n / inner.width as usize).min(n - 1);
+            let is_played = progress >= 0.0 && (cx as f64 / inner.width as f64) <= progress;
+            let dimf = if is_played { 1.0 } else { 0.5 };
+            // Peak envelope (outer, dim) from the waveform cache when present.
+            if let Some(pk) = peaks {
+                let pbi = (cx as usize * pk.len().max(1) / inner.width as usize)
+                    .min(pk.len().saturating_sub(1));
+                if let Some(&(lo, hi)) = pk.get(pbi) {
+                    let y0 = (mid - hi as f64 * half).round() as i32;
+                    let y1 = (mid - lo as f64 * half).round() as i32;
+                    for y in y0..=y1 {
+                        if y >= inner.y as i32 && y < inner.bottom() as i32 {
+                            let cell = &mut buf[(inner.x + cx, y as u16)];
+                            cell.set_char('│');
+                            cell.set_fg(crate::color::scale(t.wave, 0.35 * dimf));
+                        }
+                    }
+                }
+            }
+            // RMS body (inner, bright) — symmetric around the midline.
+            let r = a.rms[bi] as f64;
+            let y0 = (mid - r * half).round() as i32;
+            let y1 = (mid + r * half).round() as i32;
+            for y in y0..=y1 {
+                if y >= inner.y as i32 && y < inner.bottom() as i32 {
+                    let cell = &mut buf[(inner.x + cx, y as u16)];
+                    cell.set_char('█');
+                    cell.set_fg(crate::color::scale(t.accent, dimf));
+                }
+            }
+        }
+        playhead_column(f, app, inner, progress);
+    });
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport
