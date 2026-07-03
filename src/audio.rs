@@ -1673,9 +1673,250 @@ fn waveform_bins_stream(path: &Path, n_bins: usize) -> Result<Vec<(f32, f32)>> {
     Ok(out)
 }
 
+/// Per-track analysis for the inspector's data views, one entry per time bin.
+/// Computed by `analyze_track` on the analysis worker; ~40KB per track.
+pub struct TrackAnalysis {
+    /// (bass, mid, treble) energy per bin, each normalized to the track's own
+    /// per-band maximum (0..1) so quiet tracks still draw full-range views.
+    pub bands: Vec<(f32, f32, f32)>,
+    /// RMS level per bin, 0..1 absolute (NOT normalized — dynamics views need
+    /// the real level relative to full scale).
+    pub rms: Vec<f32>,
+    /// Mean compressed bitrate per bin in kbps; `None` when the container
+    /// yields no sample rate to derive timing from.
+    pub bitrate: Option<Vec<f32>>,
+}
+
+/// Decode `path` end to end (streaming, never holding raw audio) and fold a
+/// per-bin analysis: band energies via the same cheap one-pole split the beat
+/// tracker uses, RMS, and compressed bitrate from packet byte sizes. One
+/// (energy, frames, bytes) record per packet is kept — a few thousand entries
+/// — then grouped into `n_bins` time bins at the end, which handles known and
+/// unknown track lengths with the same code path.
+pub fn analyze_track(path: &Path, n_bins: usize) -> Result<TrackAnalysis> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymErr;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    if n_bins == 0 {
+        return Ok(TrackAnalysis {
+            bands: Vec::new(),
+            rms: Vec::new(),
+            bitrate: None,
+        });
+    }
+    let mut hint = Hint::new();
+    let mss = if let Some((arc, inner)) = crate::archive::split_virtual(path) {
+        let bytes = crate::archive::read(&arc, &inner)
+            .ok_or_else(|| anyhow!("archive entry unreadable: {inner}"))?;
+        if let Some(ext) = Path::new(&inner).extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        MediaSourceStream::new(Box::new(MemSource::new(bytes)), Default::default())
+    } else {
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let file = File::open(path)?;
+        MediaSourceStream::new(Box::new(file), Default::default())
+    };
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
+    let mut format = probed.format;
+    let track = format
+        .default_track()
+        .ok_or_else(|| anyhow!("no default track"))?
+        .clone();
+    let track_id = track.id;
+    let sr = track.codec_params.sample_rate;
+    let mut decoder =
+        symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
+
+    /// One packet's accumulated numbers.
+    #[derive(Clone, Copy, Default)]
+    struct Pkt {
+        e_bass: f64,
+        e_mid: f64,
+        e_treble: f64,
+        e_full: f64,
+        frames: u64,
+        bytes: u64,
+    }
+    let mut pkts: Vec<Pkt> = Vec::new();
+    let (mut lp_bass, mut lp_mid) = (0.0f32, 0.0f32);
+    let mut sbuf: Option<SampleBuffer<f32>> = None;
+    while let Ok(packet) = format.next_packet() {
+        if packet.track_id() != track_id {
+            continue;
+        }
+        let nbytes = packet.data.len() as u64;
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let ch = decoded.spec().channels.count().max(1);
+                if sbuf.is_none() {
+                    let spec = *decoded.spec();
+                    sbuf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+                }
+                let sb = sbuf.as_mut().unwrap();
+                sb.copy_interleaved_ref(decoded);
+                let samples = sb.samples();
+                let frames = samples.len() / ch;
+                let mut p = Pkt {
+                    bytes: nbytes,
+                    frames: frames as u64,
+                    ..Default::default()
+                };
+                for f in 0..frames {
+                    let base = f * ch;
+                    let l = samples[base];
+                    let r = if ch >= 2 { samples[base + 1] } else { l };
+                    let m = 0.5 * (l + r);
+                    // Same aesthetic band split as beat.rs.
+                    lp_bass += (m - lp_bass) * 0.025;
+                    let bass = lp_bass;
+                    let hp = m - bass;
+                    lp_mid += (hp - lp_mid) * 0.20;
+                    let mid = lp_mid;
+                    let treble = hp - lp_mid;
+                    p.e_bass += (bass * bass) as f64;
+                    p.e_mid += (mid * mid) as f64;
+                    p.e_treble += (treble * treble) as f64;
+                    p.e_full += (m * m) as f64;
+                }
+                if frames > 0 {
+                    pkts.push(p);
+                }
+            }
+            Err(SymErr::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+    let total_frames: u64 = pkts.iter().map(|p| p.frames).sum();
+    if total_frames == 0 {
+        return Err(anyhow!("no audio decoded"));
+    }
+
+    // Group packets into time-proportional bins by cumulative frame position.
+    let mut acc: Vec<Pkt> = vec![Pkt::default(); n_bins];
+    let mut pos: u64 = 0;
+    for p in &pkts {
+        let bi = ((pos * n_bins as u64) / total_frames).min(n_bins as u64 - 1) as usize;
+        let a = &mut acc[bi];
+        a.e_bass += p.e_bass;
+        a.e_mid += p.e_mid;
+        a.e_treble += p.e_treble;
+        a.e_full += p.e_full;
+        a.frames += p.frames;
+        a.bytes += p.bytes;
+        pos += p.frames;
+    }
+    let rms_of = |e: f64, n: u64| -> f32 {
+        if n == 0 { 0.0 } else { (e / n as f64).sqrt() as f32 }
+    };
+    let mut bands: Vec<(f32, f32, f32)> = acc
+        .iter()
+        .map(|a| {
+            (
+                rms_of(a.e_bass, a.frames),
+                rms_of(a.e_mid, a.frames),
+                rms_of(a.e_treble, a.frames),
+            )
+        })
+        .collect();
+    // Normalize each band to its own track max so views get full range.
+    let (mut mb, mut mm, mut mt) = (0.0f32, 0.0f32, 0.0f32);
+    for &(b, m, t) in &bands {
+        mb = mb.max(b);
+        mm = mm.max(m);
+        mt = mt.max(t);
+    }
+    for e in &mut bands {
+        e.0 /= mb.max(1e-6);
+        e.1 /= mm.max(1e-6);
+        e.2 /= mt.max(1e-6);
+    }
+    let rms: Vec<f32> = acc.iter().map(|a| rms_of(a.e_full, a.frames)).collect();
+    let bitrate = sr.map(|sr| {
+        acc.iter()
+            .map(|a| {
+                if a.frames == 0 {
+                    0.0
+                } else {
+                    // bytes*8 bits over frames/sr seconds, in kbps.
+                    (a.bytes * 8) as f32 / (a.frames as f32 / sr as f32) / 1000.0
+                }
+            })
+            .collect()
+    });
+    Ok(TrackAnalysis {
+        bands,
+        rms,
+        bitrate,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimal PCM16 mono WAV writer for synthesizing test audio.
+    fn write_wav(path: &Path, sr: u32, samples: &[i16]) {
+        let data_len = (samples.len() * 2) as u32;
+        let mut b: Vec<u8> = Vec::new();
+        b.extend(b"RIFF");
+        b.extend((36 + data_len).to_le_bytes());
+        b.extend(b"WAVEfmt ");
+        b.extend(16u32.to_le_bytes());
+        b.extend(1u16.to_le_bytes()); // PCM
+        b.extend(1u16.to_le_bytes()); // mono
+        b.extend(sr.to_le_bytes());
+        b.extend((sr * 2).to_le_bytes());
+        b.extend(2u16.to_le_bytes());
+        b.extend(16u16.to_le_bytes());
+        b.extend(b"data");
+        b.extend(data_len.to_le_bytes());
+        for s in samples {
+            b.extend(s.to_le_bytes());
+        }
+        std::fs::write(path, b).unwrap();
+    }
+
+    /// Silence then a loud tone: the RMS profile must reflect the structure,
+    /// bands must be per-bin and normalized, bitrate present for WAV.
+    #[test]
+    fn analyze_track_rms_structure() {
+        let sr = 44_100u32;
+        let n = sr as usize * 2; // 2s
+        let mut samples = vec![0i16; n];
+        for (i, s) in samples.iter_mut().enumerate().skip(n / 2) {
+            let t = i as f32 / sr as f32;
+            *s = ((t * 60.0 * std::f32::consts::TAU).sin() * 0.8 * 32767.0) as i16;
+        }
+        let dir = std::env::temp_dir().join("muse-analyze-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("halftone.wav");
+        write_wav(&p, sr, &samples);
+
+        let a = analyze_track(&p, 100).expect("analysis");
+        assert_eq!(a.bands.len(), 100);
+        assert_eq!(a.rms.len(), 100);
+        assert!(a.bitrate.is_some());
+        let head: f32 = a.rms[..40].iter().sum::<f32>() / 40.0;
+        let tail: f32 = a.rms[60..].iter().sum::<f32>() / 40.0;
+        assert!(head < 0.05, "head rms {head}");
+        assert!(tail > 0.3, "tail rms {tail}");
+        // Normalization: every band peaks at 1.0 somewhere.
+        let mb = a.bands.iter().map(|b| b.0).fold(0.0f32, f32::max);
+        assert!((mb - 1.0).abs() < 1e-3, "bass max {mb}");
+    }
 
     #[test]
     fn sinc_resample_length_and_finite() {

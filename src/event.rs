@@ -15,6 +15,8 @@ pub enum AppEvent {
     Tick,
     /// Background waveform result: (path, generation token, bins).
     Wave(PathBuf, u64, Vec<(f32, f32)>),
+    /// Background per-track analysis (bands / rms / bitrate) for data views.
+    Analysis(PathBuf, std::sync::Arc<crate::audio::TrackAnalysis>),
     /// Background album-art result: (path, decoded cover or `None` if absent).
     Art(PathBuf, Option<image::RgbImage>),
     /// Full recursive media-file index for fuzzy filtering (built off-thread).

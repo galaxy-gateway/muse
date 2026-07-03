@@ -159,6 +159,14 @@ pub struct App {
     /// Index into `config::WAVE_VIEWS`: which view fills the inspector's
     /// middle panel. Cycled with `W`; persisted by name.
     pub wave_view_idx: usize,
+    /// Per-track analysis (band energy / RMS / bitrate) for the data views,
+    /// LRU-bounded; computed lazily by the analysis worker only when a view
+    /// that needs it is active.
+    pub analysis_cache: HashMap<PathBuf, Arc<crate::audio::TrackAnalysis>>,
+    pub(super) analysis_order: Vec<PathBuf>,
+    pub(super) analysis_pending: Option<PathBuf>,
+    /// Debounce slot for analysis requests (Tick arm fires after 150ms).
+    pub(super) analysis_want: Option<(PathBuf, Instant)>,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -287,6 +295,8 @@ pub struct App {
     /// Single-slot mailbox for browse art requests: path.
     /// Written by Tick arm after debounce, read by persistent art worker.
     pub(super) art_job: Arc<(Mutex<Option<PathBuf>>, std::sync::Condvar)>,
+    /// Single-slot mailbox for track-analysis requests: path.
+    pub(super) analysis_job: Arc<(Mutex<Option<PathBuf>>, std::sync::Condvar)>,
     /// Shared idle flag with tick thread, to adapt sleep duration.
     pub(super) idle_flag: Arc<AtomicBool>,
 }
@@ -365,6 +375,10 @@ impl App {
             master_intensity: settings.master_intensity.unwrap_or(0.5).clamp(0.0, 1.0),
             no_motion: settings.no_motion.unwrap_or(false),
             help_scroll: 0,
+            analysis_cache: HashMap::new(),
+            analysis_order: Vec::new(),
+            analysis_pending: None,
+            analysis_want: None,
             wave_view_idx: settings
                 .wave_view
                 .as_deref()
@@ -438,6 +452,7 @@ impl App {
             tx: tx.clone(),
             wave_job: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             art_job: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+            analysis_job: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
             idle_flag: idle_flag.clone(),
         };
 
@@ -490,6 +505,27 @@ impl App {
         app.refresh_palette();
         app.theme = app.theme_target;
         app.theme_fade = None;
+        // Spawn the persistent track-analysis worker thread (bands/rms/
+        // bitrate for the data views). A full-track decode per job, so the
+        // single-slot mailbox + debounce keep it to one inflight at a time.
+        let analysis_job = app.analysis_job.clone();
+        let analysis_tx = app.tx.clone();
+        thread::spawn(move || {
+            const BINS: usize = 1600;
+            loop {
+                let path = {
+                    let mut job = analysis_job.0.lock().unwrap();
+                    while job.is_none() {
+                        job = analysis_job.1.wait(job).unwrap();
+                    }
+                    job.take().unwrap()
+                };
+                if let Ok(a) = crate::audio::analyze_track(&path, BINS) {
+                    let _ = analysis_tx.send(AppEvent::Analysis(path, Arc::new(a)));
+                }
+            }
+        });
+
         app.on_selection_changed();
         app.restore_session(&settings);
         Ok(app)
@@ -624,6 +660,24 @@ impl App {
         const ART_CAP: usize = 24;
         let keep = self.keep_paths();
         evict_lru(&mut self.wave_art, &mut self.art_order, ART_CAP, &keep);
+    }
+
+    fn evict_analysis(&mut self) {
+        const ANALYSIS_CAP: usize = 24;
+        let keep = self.keep_paths();
+        evict_lru(
+            &mut self.analysis_cache,
+            &mut self.analysis_order,
+            ANALYSIS_CAP,
+            &keep,
+        );
+    }
+
+    /// Whether the active wave-pane view reads the analysis cache — the
+    /// worker only runs when something will actually draw the result.
+    pub fn wave_view_needs_analysis(&self) -> bool {
+        // Grows as data views land (spectrogram / bands / bitrate / dynamics).
+        false
     }
 
     fn evict_wave(&mut self) {
@@ -1025,6 +1079,28 @@ impl App {
                         self.art_want = Some((path, since));
                     }
                 }
+                // Demand-driven analysis for the data views: when the active
+                // view needs it and the now-playing track has none, request
+                // it through the 150ms-debounced single-slot worker.
+                if self.wave_view_needs_analysis()
+                    && let Some(np) = self.now_playing.clone()
+                    && !self.analysis_cache.contains_key(&np)
+                    && self.analysis_pending.as_ref() != Some(&np)
+                {
+                    match &self.analysis_want {
+                        Some((p, since)) if *p == np => {
+                            if since.elapsed().as_millis() >= 150 {
+                                self.analysis_pending = Some(np.clone());
+                                self.analysis_want = None;
+                                if let Ok(mut job) = self.analysis_job.0.lock() {
+                                    *job = Some(np);
+                                    self.analysis_job.1.notify_one();
+                                }
+                            }
+                        }
+                        _ => self.analysis_want = Some((np, Instant::now())),
+                    }
+                }
                 // ~2s after a burst settled, ask libmalloc to return the
                 // burst's freed-but-dirty pages to the OS (they otherwise stay
                 // resident for ~35s — see docs/rapid-cycle-memory.md). By then
@@ -1084,6 +1160,14 @@ impl App {
                 // the entry is final now, so stop refreshing over it.
                 if self.wave_stream_stopgap.as_ref() == Some(&path) {
                     self.wave_stream_stopgap = None;
+                }
+            }
+            AppEvent::Analysis(path, analysis) => {
+                self.analysis_cache.insert(path.clone(), analysis);
+                touch_lru(&mut self.analysis_order, &path);
+                self.evict_analysis();
+                if self.analysis_pending.as_ref() == Some(&path) {
+                    self.analysis_pending = None;
                 }
             }
             AppEvent::Art(path, art) => {
