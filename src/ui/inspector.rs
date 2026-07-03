@@ -29,6 +29,7 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         crate::config::WaveView::Bands => draw_bands(f, app, rows[1]),
         crate::config::WaveView::Bitrate => draw_bitrate(f, app, rows[1]),
         crate::config::WaveView::Dynamics => draw_dynamics(f, app, rows[1]),
+        crate::config::WaveView::BeatMap => draw_beat_map(f, app, rows[1]),
     }
     draw_scope(f, app, rows[2]);
 }
@@ -588,6 +589,82 @@ fn draw_dynamics(f: &mut Frame, app: &App, area: Rect) {
         }
         playhead_column(f, app, inner, progress);
     });
+}
+
+/// Beat map: every onset heard this session is a tick on the track timeline,
+/// three lanes (bass at the bottom), building up radar-style as you listen.
+fn draw_beat_map(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let log = app
+        .now_playing
+        .as_ref()
+        .and_then(|p| app.beat_log.get(p));
+    let count = log.map(|l| l.len()).unwrap_or(0);
+    let title = format!("beat map · {count} hits");
+    let block = panel_hint(
+        title.as_str(),
+        border(t, app.frame, t.wave, 0.42, app.beat_pulse()),
+        "W next view",
+        t.dim,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 4 || inner.height < 3 {
+        return;
+    }
+    let progress = np_progress(app);
+    let lane_h = inner.height / 3;
+    let colors = [t.accent2, t.wave, t.accent]; // treble top … bass bottom
+    let labels = ["treble", "mid", "bass"];
+    let buf = f.buffer_mut();
+    // Lane baselines + labels.
+    for lane in 0..3u16 {
+        let y = inner.y + lane * lane_h + lane_h / 2;
+        for cx in 0..inner.width {
+            let cell = &mut buf[(inner.x + cx, y)];
+            if cell.symbol() == " " {
+                cell.set_char('┄');
+                cell.set_fg(crate::color::scale(t.dim, 0.6));
+            }
+        }
+        for (i, ch) in labels[lane as usize].chars().enumerate() {
+            let x = inner.x + 1 + i as u16;
+            if x < inner.right() {
+                let cell = &mut buf[(x, (inner.y + lane * lane_h).max(inner.y))];
+                if cell.symbol() == " " {
+                    cell.set_char(ch);
+                    cell.set_fg(crate::color::scale(colors[lane as usize], 0.6));
+                }
+            }
+        }
+    }
+    if let Some(log) = log {
+        for &(frac, band) in log {
+            let lane = 2 - band.min(2) as u16; // bass lane at the bottom
+            let x = inner.x + ((frac as f64 * (inner.width - 1) as f64).round() as u16);
+            let y = inner.y + lane * lane_h + lane_h / 2;
+            let played = progress >= 0.0 && (frac as f64) <= progress;
+            let col = colors[lane as usize];
+            let cell = &mut buf[(x, y)];
+            cell.set_char('┃');
+            cell.set_fg(if played {
+                col
+            } else {
+                crate::color::scale(col, 0.5)
+            });
+        }
+    } else {
+        let msg = "listen — beats land here as they are heard";
+        for (i, ch) in msg.chars().enumerate() {
+            let x = inner.x + 2 + i as u16;
+            if x < inner.right() {
+                let cell = &mut buf[(x, inner.y + inner.height / 2)];
+                cell.set_char(ch);
+                cell.set_fg(t.dim);
+            }
+        }
+    }
+    playhead_column(f, app, inner, progress);
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport

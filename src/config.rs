@@ -525,6 +525,7 @@ pub enum WaveView {
     Bands,
     Bitrate,
     Dynamics,
+    BeatMap,
 }
 
 /// Cycle order + display names for the wave-pane views.
@@ -534,6 +535,7 @@ pub const WAVE_VIEWS: &[(WaveView, &str)] = &[
     (WaveView::Bands, "bands"),
     (WaveView::Bitrate, "bitrate"),
     (WaveView::Dynamics, "dynamics"),
+    (WaveView::BeatMap, "beat map"),
 ];
 
 /// Persisted user settings (TOML at the platform config dir).

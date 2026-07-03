@@ -167,6 +167,12 @@ pub struct App {
     pub(super) analysis_pending: Option<PathBuf>,
     /// Debounce slot for analysis requests (Tick arm fires after 150ms).
     pub(super) analysis_want: Option<(PathBuf, Instant)>,
+    /// Onsets heard per track this session: (playhead fraction, band 0..2).
+    /// Fills in as you listen; the beat-map view draws it. Bounded.
+    pub beat_log: HashMap<PathBuf, Vec<(f32, u8)>>,
+    pub(super) beat_log_order: Vec<PathBuf>,
+    /// Previous tick's band pulses, for onset edge detection.
+    pub(super) prev_bands: [f32; 3],
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -379,6 +385,9 @@ impl App {
             analysis_order: Vec::new(),
             analysis_pending: None,
             analysis_want: None,
+            beat_log: HashMap::new(),
+            beat_log_order: Vec::new(),
+            prev_bands: [0.0; 3],
             wave_view_idx: settings
                 .wave_view
                 .as_deref()
@@ -671,6 +680,39 @@ impl App {
             ANALYSIS_CAP,
             &keep,
         );
+    }
+
+    /// Log rising-edge band onsets against the playhead for the beat-map
+    /// view. Cheap (three comparisons); runs every tick while playing.
+    fn record_onsets(&mut self) {
+        let bands = self.beat.bands();
+        let prev = std::mem::replace(&mut self.prev_bands, bands);
+        if !self.engine.is_playing() {
+            return;
+        }
+        let (Some(np), dur) = (self.now_playing.clone(), self.engine.duration_secs()) else {
+            return;
+        };
+        if dur <= 0.0 {
+            return;
+        }
+        let frac = (self.engine.position_secs() / dur).clamp(0.0, 1.0) as f32;
+        for (bi, (&now, &was)) in bands.iter().zip(prev.iter()).enumerate() {
+            if now > 0.5 && was <= 0.35 {
+                let log = self.beat_log.entry(np.clone()).or_default();
+                if log.len() < 4000 {
+                    log.push((frac, bi as u8));
+                }
+                if !self.beat_log_order.contains(&np) {
+                    self.beat_log_order.push(np.clone());
+                    // Bound the per-track logs to a handful of recent tracks.
+                    while self.beat_log_order.len() > 16 {
+                        let old = self.beat_log_order.remove(0);
+                        self.beat_log.remove(&old);
+                    }
+                }
+            }
+        }
     }
 
     /// Whether the active wave-pane view reads the analysis cache — the
@@ -999,6 +1041,7 @@ impl App {
                 // Track beat/energy every tick so beat-reactive effects (Glitch)
                 // always have a fresh signal regardless of the scope preset.
                 self.beat.update(&self.scope_buf, self.engine.is_playing());
+                self.record_onsets();
                 // Only run the FFT when the spectrum visualizer is the active
                 // preset — it is the sole reader of the band state.
                 if self.scope_preset().style == ScopeStyle::Spectrum {
