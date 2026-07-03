@@ -189,7 +189,7 @@ impl ThemeEffect for Seismograph {
         }
 
         // Baselines + channel labels at the left margin.
-        for ch in 0..3usize {
+        for (ch, &(ink, _, label)) in CHANNELS.iter().enumerate() {
             let y = base_y(ctx, ch);
             for x in (area.x + 1)..(area.right() - 1) {
                 let cell = &mut buf[(x, y)];
@@ -198,13 +198,12 @@ impl ThemeEffect for Seismograph {
                     cell.set_fg(GRID);
                 }
             }
-            let label = CHANNELS[ch].2;
             for (i, c) in label.chars().enumerate() {
                 let x = area.x + 2 + i as u16;
                 let cell = &mut buf[(x, y.saturating_sub(1))];
                 if cell.symbol() == " " {
                     cell.set_char(c);
-                    cell.set_fg(scale(CHANNELS[ch].0, 0.55));
+                    cell.set_fg(scale(ink, 0.55));
                 }
             }
         }
@@ -218,7 +217,7 @@ impl ThemeEffect for Seismograph {
             if p.seed & EVENT != 0 {
                 // Track-change stamp: dashed vertical through all channels.
                 for y in band_top..=band_bot {
-                    if (y - band_top) % 2 == 0 {
+                    if (y - band_top).is_multiple_of(2) {
                         let cell = &mut buf[(x as u16, y)];
                         cell.set_char('╎');
                         cell.set_fg(scale(Color::Rgb(0xe0, 0xd8, 0xc4), 0.5));
