@@ -20,7 +20,12 @@ use crate::util::fmt_time;
 pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
     let rows = inspector_rows(area);
     draw_now_playing(f, app, rows[0]);
-    draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true);
+    // The middle panel is a cycleable view (W), like the scope presets.
+    match crate::config::WAVE_VIEWS[app.wave_view_idx].0 {
+        crate::config::WaveView::Waveform => {
+            draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true)
+        }
+    }
     draw_scope(f, app, rows[2]);
 }
 

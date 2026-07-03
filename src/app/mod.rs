@@ -156,6 +156,9 @@ pub struct App {
     pub(super) no_motion: bool,
     /// Scroll offset of the help modal (clamped to content at draw time).
     pub help_scroll: u16,
+    /// Index into `config::WAVE_VIEWS`: which view fills the inspector's
+    /// middle panel. Cycled with `W`; persisted by name.
+    pub wave_view_idx: usize,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -362,6 +365,13 @@ impl App {
             master_intensity: settings.master_intensity.unwrap_or(0.5).clamp(0.0, 1.0),
             no_motion: settings.no_motion.unwrap_or(false),
             help_scroll: 0,
+            wave_view_idx: settings
+                .wave_view
+                .as_deref()
+                .and_then(|n| {
+                    crate::config::WAVE_VIEWS.iter().position(|(_, name)| *name == n)
+                })
+                .unwrap_or(0),
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -556,6 +566,7 @@ impl App {
             scope_preset: Some(self.scope_preset().name.to_string()),
             theme: Some(THEMES[self.theme_idx].name.to_string()),
             adaptive_palette: Some(self.adaptive),
+            wave_view: Some(crate::config::WAVE_VIEWS[self.wave_view_idx].1.to_string()),
             master_intensity: Some(self.master_intensity),
             no_motion: Some(self.no_motion),
             gapless: Some(self.gapless),

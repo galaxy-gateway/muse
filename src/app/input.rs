@@ -127,6 +127,7 @@ impl App {
                 self.engine.send(TransportCmd::VolRel(0.05))
             }
             (KeyCode::Char('-'), _) => self.engine.send(TransportCmd::VolRel(-0.05)),
+            (KeyCode::Char('W'), _) => self.cycle_wave_view(),
             (KeyCode::Char('v'), _) => self.cycle_scope(1),
             (KeyCode::Char('V'), _) => self.cycle_scope(-1),
             (KeyCode::Char('t'), _) => self.open_theme_picker(),
@@ -236,6 +237,12 @@ impl App {
         };
         let ctx = self.frame_ctx();
         self.theme.effect.on_nav(&mut self.sim, &ctx, dir);
+    }
+
+    /// Cycle the inspector's middle-panel view (waveform / ...), saved.
+    fn cycle_wave_view(&mut self) {
+        self.wave_view_idx = (self.wave_view_idx + 1) % crate::config::WAVE_VIEWS.len();
+        self.persist();
     }
 
     fn cycle_scope(&mut self, delta: i32) {

@@ -334,6 +334,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &mut App) {
                 ("[ / ]", "in picker: master effect level"),
                 ("m", "motion on / off — keep colors, park animation"),
                 ("v / V", "cycle visualizer preset  (saved)"),
+                ("W", "cycle inspector view  (saved)"),
                 ("i", "toggle cover art"),
             ],
         ),

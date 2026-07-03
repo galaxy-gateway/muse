@@ -516,6 +516,16 @@ pub struct ScopePreset {
     pub auto_gain: bool,
 }
 
+/// Inspector middle-panel views, cycled with `W`. The list grows as views
+/// land; persisted by name so reordering never breaks saved settings.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WaveView {
+    Waveform,
+}
+
+/// Cycle order + display names for the wave-pane views.
+pub const WAVE_VIEWS: &[(WaveView, &str)] = &[(WaveView::Waveform, "waveform")];
+
 /// Persisted user settings (TOML at the platform config dir).
 #[derive(Serialize, Deserialize, Default)]
 pub struct Settings {
@@ -525,6 +535,8 @@ pub struct Settings {
     pub theme: Option<String>,
     /// Retint the active theme from the now-playing cover art. Defaults off.
     pub adaptive_palette: Option<bool>,
+    /// Name of the last-used inspector wave-pane view.
+    pub wave_view: Option<String>,
     /// Master effect level on top of per-theme tunings (0.5 = neutral).
     pub master_intensity: Option<f32>,
     /// Accessibility: force the static effect while keeping any palette.
