@@ -334,13 +334,6 @@ pub trait ThemeEffect: Sync {
     /// can react once per real audio switch (Tape's rewind smear).
     fn on_track(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
 
-    /// Names of this theme's colorways (shown by the Palette knob), empty if
-    /// the theme has only one. Themes with variants define exactly three and
-    /// index their internal color tables with `tuning.choice(Knob::Palette)`.
-    fn palette_names(&self) -> &'static [&'static str] {
-        &[]
-    }
-
     /// Per-tick continuous spawning (rain, bubbles, scope shoot-offs, ...).
     fn ambient(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
 

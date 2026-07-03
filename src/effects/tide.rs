@@ -58,17 +58,12 @@ fn surface(x: u16, frame: u64, swell: f64, intensity: f64) -> f64 {
 impl ThemeEffect for Tide {
     fn knobs(&self) -> &'static [Knob] {
         &[
-            Knob::Palette,
             Knob::Intensity,
             Knob::Density,
             Knob::Wind,
             Knob::BeatSync,
             Knob::BeatSource,
         ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["ocean", "lagoon", "abyss"]
     }
 
     fn default_tuning(&self) -> Tuning {

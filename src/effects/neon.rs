@@ -29,16 +29,11 @@ pub struct Neon;
 impl ThemeEffect for Neon {
     fn knobs(&self) -> &'static [Knob] {
         &[
-            Knob::Palette,
             Knob::Intensity,
             Knob::Speed,
             Knob::BeatSync,
             Knob::BeatSource,
         ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["magenta", "cyan", "gold"]
     }
 
     fn default_tuning(&self) -> Tuning {

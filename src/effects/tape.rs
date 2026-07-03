@@ -30,16 +30,11 @@ pub struct Tape;
 impl ThemeEffect for Tape {
     fn knobs(&self) -> &'static [Knob] {
         &[
-            Knob::Palette,
             Knob::Intensity,
             Knob::Speed,
             Knob::Disruption,
             Knob::BeatSync,
         ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["oxide", "chrome", "gold"]
     }
 
     fn default_tuning(&self) -> Tuning {

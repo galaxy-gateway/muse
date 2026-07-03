@@ -127,6 +127,14 @@ fade). Current sets:
 | fireflies | meadow / ember / ghost |
 | metronome | brass / silver / rosewood |
 
+As of v0.56.0 EVERY theme has a colorway set (the originals get UI-anchor
+variants — the overlay keeps its identity colors). The registry is
+`config::colorways` (names + anchor pairs in one table); `config::theme_knobs`
+prepends the Palette knob for any theme with an entry, so shared/static
+effects get it too. Also in v0.56.0: `m` toggles no-motion globally (not just
+inside the picker), and the help modal is sectioned, styled, and scrollable
+(j/k, g/G) with a percent indicator when the window is too small.
+
 Also in this release: seismograph ink TINTS text it crosses instead of
 overwriting glyphs (`ink_cell`), and the metronome grew a full-height
 pendulum arm hung from the top of the screen (glyph-tinting like the radar

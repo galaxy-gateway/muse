@@ -40,17 +40,12 @@ pub struct Fireflies;
 impl ThemeEffect for Fireflies {
     fn knobs(&self) -> &'static [Knob] {
         &[
-            Knob::Palette,
             Knob::Density,
             Knob::Speed,
             Knob::BeatSync,
             Knob::BeatSource,
             Knob::FollowMouse,
         ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["meadow", "ember", "ghost"]
     }
 
     fn default_tuning(&self) -> Tuning {

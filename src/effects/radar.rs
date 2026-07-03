@@ -59,16 +59,11 @@ pub struct Radar;
 impl ThemeEffect for Radar {
     fn knobs(&self) -> &'static [Knob] {
         &[
-            Knob::Palette,
             Knob::Speed,
             Knob::Persistence,
             Knob::Density,
             Knob::BeatSync,
         ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["green", "amber", "arctic"]
     }
 
     fn default_tuning(&self) -> Tuning {

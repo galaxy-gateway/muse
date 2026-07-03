@@ -15,7 +15,7 @@ use crate::config::THEMES;
 /// live-previewed in the rest of the UI. Navigated with j/k, applied with Enter.
 pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     let t = &app.theme;
-    let knobs = THEMES[app.theme_sel].effect.knobs();
+    let knobs = crate::config::theme_knobs(app.theme_sel);
     let configurable = !knobs.is_empty();
     // The modal keeps its original footprint; when the highlighted theme is
     // configurable the knob panel is docked *inside* it on the right (the list
@@ -113,7 +113,7 @@ pub(super) fn draw_theme_modal(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, list_area, &mut state);
 
     if show_editor {
-        draw_theme_editor(f, app, editor_area, knobs);
+        draw_theme_editor(f, app, editor_area, &knobs);
     }
 }
 
@@ -158,9 +158,9 @@ fn draw_theme_editor(f: &mut Frame, app: &App, area: Rect, knobs: &[crate::effec
                 lines.push(Line::from(Span::styled(txt, Style::default().fg(col))));
             }
             crate::effects::KnobKind::Choice(opts) => {
-                // The palette knob's real colorway names live on the effect.
+                // The palette knob's real colorway names live in config.
                 let opts = if *k == crate::effects::Knob::Palette {
-                    let names = THEMES[app.theme_sel].effect.palette_names();
+                    let names = crate::config::variant_names(THEMES[app.theme_sel].name);
                     if names.len() == opts.len() {
                         names
                     } else {
@@ -275,56 +275,143 @@ pub(super) fn draw_queue_modal(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
-pub(super) fn draw_help(f: &mut Frame, app: &App) {
-    let t = &app.theme;
-    let area = centered(62, 75, f.area());
+pub(super) fn draw_help(f: &mut Frame, app: &mut App) {
+    let t = app.theme;
+    let area = centered(62, 80, f.area());
     f.render_widget(Clear, area);
-    let lines = vec![
-        Line::from(Span::styled(
-            format!("muse v{} — keys", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("  j / k or ↑ ↓     move cursor"),
-        Line::from("  l / →            expand dir"),
-        Line::from("  h / ←            collapse / parent"),
-        Line::from("  g / G            top / bottom"),
-        Line::from("  ⏎                expand dir or play file"),
-        Line::from("  space            play / pause"),
-        Line::from("  n / p            next / previous track"),
-        Line::from("  u                back to previous song (resumes position)"),
-        Line::from("  a / A            queue: append / play-next the selection"),
-        Line::from("  Q                open queue manager   w  save queue (.m3u)"),
-        Line::from("  c                jump cursor to the now-playing track"),
-        Line::from("  r                loop mode (off / all / one)"),
-        Line::from("  s                shuffle on / off (no-repeat, saved)"),
-        Line::from("  b                gapless playback on / off (saved)"),
-        Line::from("  y / Y or ⧉       copy selection / now-playing path"),
-        Line::from("  , / .            seek -5s / +5s"),
-        Line::from("  shift ← / →      scrub playhead -1s / +1s"),
-        Line::from("  click tree       folder: fold · file: play"),
-        Line::from("  click/drag bar   seek / scrub the playhead"),
-        Line::from("  media keys       play/pause/next/prev (OS)"),
-        Line::from("  - / +            volume down / up"),
-        Line::from("  v / V            cycle visualizer preset (saved)"),
-        Line::from("  i                toggle cover art (off by default)"),
-        Line::from(format!(
-            "  t                theme picker — {} (saved)",
-            t.name
-        )),
-        Line::from("  tab (in picker)  tune animated themes — beat sync / density / ..."),
-        Line::from("  /                fuzzy find (⏎ apply · esc reset)"),
-        Line::from("  ? then q / esc   open / close this help"),
-        Line::from("  q                quit"),
+
+    // (key, description) rows grouped under section headers. Keys render in
+    // an aligned accent column; headers in accent2.
+    type Section = (&'static str, &'static [(&'static str, &'static str)]);
+    const SECTIONS: &[Section] = &[
+        (
+            "navigate",
+            &[
+                ("j / k · ↑ ↓", "move cursor"),
+                ("l / →", "expand directory"),
+                ("h / ←", "collapse / go to parent"),
+                ("g / G", "jump to top / bottom"),
+                ("/", "fuzzy find  (⏎ apply · esc reset)"),
+                ("c", "jump to the now-playing track"),
+            ],
+        ),
+        (
+            "playback",
+            &[
+                ("⏎", "expand directory or play file"),
+                ("space", "play / pause"),
+                ("n / p", "next / previous track"),
+                ("u", "back to previous song (resumes position)"),
+                ("r", "loop mode  off / all / one"),
+                ("s", "shuffle on / off  (no-repeat bag, saved)"),
+                ("b", "gapless playback on / off  (saved)"),
+            ],
+        ),
+        (
+            "queue",
+            &[
+                ("a / A", "append / play-next the selection"),
+                ("Q", "open the queue manager"),
+                ("w", "save the queue as .m3u"),
+            ],
+        ),
+        (
+            "seek & volume",
+            &[
+                (", / .", "seek -5s / +5s"),
+                ("shift ← / →", "scrub the playhead -1s / +1s"),
+                ("click / drag", "seek on the waveform or transport bar"),
+                ("- / +", "volume down / up"),
+                ("media keys", "play / pause / next / prev (OS)"),
+            ],
+        ),
+        (
+            "look & feel",
+            &[
+                ("t", "theme picker  (⏎ apply · esc cancel)"),
+                ("tab", "in picker: tune knobs — palette, beat source, ..."),
+                ("a", "in picker: adaptive art tint on / off"),
+                ("[ / ]", "in picker: master effect level"),
+                ("m", "motion on / off — keep colors, park animation"),
+                ("v / V", "cycle visualizer preset  (saved)"),
+                ("i", "toggle cover art"),
+            ],
+        ),
+        (
+            "other",
+            &[
+                ("y / Y · ⧉", "copy selection / now-playing path"),
+                ("?", "open / close this help"),
+                ("q / esc", "quit (or close a modal)"),
+            ],
+        ),
     ];
-    let p = Paragraph::new(lines).block(
-        panel_hint(
-            "help",
-            border(t, app.frame, t.accent2, 0.84, app.beat_pulse()),
-            "q / esc to close",
-            t.dim,
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("muse v{}", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  ·  theme: {}", t.name),
+                Style::default().fg(t.dim),
+            ),
+        ]),
+    ];
+    for (title, rows) in SECTIONS {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("── ", Style::default().fg(t.dim)),
+            Span::styled(
+                *title,
+                Style::default().fg(t.accent2).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " ".to_string() + &"─".repeat(40usize.saturating_sub(title.len())),
+                Style::default().fg(t.dim),
+            ),
+        ]));
+        for (key, desc) in *rows {
+            // Pad the key column by display width (chars ≈ good enough here).
+            let pad = 14usize.saturating_sub(key.chars().count());
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {key}"), Style::default().fg(t.accent)),
+                Span::raw(" ".repeat(pad + 2)),
+                Span::styled(*desc, Style::default().fg(t.media)),
+            ]));
+        }
+    }
+
+    // Scroll: clamp to the real content, then hint + indicate when it
+    // overflows the (possibly small) window.
+    let inner_h = area.height.saturating_sub(4) as usize; // borders + padding
+    let max_scroll = lines.len().saturating_sub(inner_h) as u16;
+    app.help_scroll = app.help_scroll.min(max_scroll);
+    let overflow = max_scroll > 0;
+    let title = if overflow {
+        format!(
+            "help · {}%",
+            (app.help_scroll as usize * 100) / max_scroll.max(1) as usize
         )
-        .padding(Padding::uniform(1)),
-    );
+    } else {
+        "help".to_string()
+    };
+    let hint = if overflow {
+        "j/k scroll · g/G ends · q close"
+    } else {
+        "q / esc to close"
+    };
+    let p = Paragraph::new(lines)
+        .scroll((app.help_scroll, 0))
+        .block(
+            panel_hint(
+                title.as_str(),
+                border(&t, app.frame, t.accent2, 0.84, app.beat_pulse()),
+                hint,
+                t.dim,
+            )
+            .padding(Padding::uniform(1)),
+        );
     f.render_widget(p, area);
 }

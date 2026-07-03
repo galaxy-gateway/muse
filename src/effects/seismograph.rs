@@ -74,16 +74,7 @@ pub struct Seismograph;
 
 impl ThemeEffect for Seismograph {
     fn knobs(&self) -> &'static [Knob] {
-        &[
-            Knob::Palette,
-            Knob::Intensity,
-            Knob::Speed,
-            Knob::Persistence,
-        ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["classic", "blueprint", "thermal"]
+        &[Knob::Intensity, Knob::Speed, Knob::Persistence]
     }
 
     fn default_tuning(&self) -> Tuning {

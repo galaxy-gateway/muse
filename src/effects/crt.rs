@@ -29,17 +29,12 @@ pub struct Crt;
 impl ThemeEffect for Crt {
     fn knobs(&self) -> &'static [Knob] {
         &[
-            Knob::Palette,
             Knob::Intensity,
             Knob::Speed,
             Knob::Persistence,
             Knob::BeatSync,
             Knob::BeatSource,
         ]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["amber", "green", "ice"]
     }
 
     fn default_tuning(&self) -> Tuning {

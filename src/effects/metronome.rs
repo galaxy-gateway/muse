@@ -39,11 +39,7 @@ pub struct Metronome;
 
 impl ThemeEffect for Metronome {
     fn knobs(&self) -> &'static [Knob] {
-        &[Knob::Palette, Knob::Intensity, Knob::Speed, Knob::BeatSync]
-    }
-
-    fn palette_names(&self) -> &'static [&'static str] {
-        &["brass", "silver", "rosewood"]
+        &[Knob::Intensity, Knob::Speed, Knob::BeatSync]
     }
 
     fn default_tuning(&self) -> Tuning {

@@ -21,9 +21,21 @@ impl App {
             return;
         }
         if self.show_help {
-            // Modal: only q / esc dismiss; everything else is swallowed.
-            if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                self.show_help = false;
+            // Modal: scrollable when the window can't fit everything.
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('?') => {
+                    self.show_help = false;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.help_scroll = self.help_scroll.saturating_add(1);
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                }
+                KeyCode::Char('g') | KeyCode::Home => self.help_scroll = 0,
+                // Clamped to the real bottom at draw time.
+                KeyCode::Char('G') | KeyCode::End => self.help_scroll = u16::MAX,
+                _ => {}
             }
             return;
         }
@@ -44,7 +56,12 @@ impl App {
             (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            (KeyCode::Char('?'), _) => self.show_help = true,
+            (KeyCode::Char('?'), _) => {
+                self.show_help = true;
+                self.help_scroll = 0;
+            }
+            // Global motion toggle (also available inside the theme modal).
+            (KeyCode::Char('m'), _) => self.toggle_motion(),
             (KeyCode::Char('/'), _) => {
                 self.filtering = true;
                 self.list_state.select(if self.filtered.is_empty() {
@@ -265,9 +282,10 @@ impl App {
         // Knob edits are applied + saved live, so they are intentionally kept.
     }
 
-    /// Knobs exposed by the currently highlighted theme (empty = not configurable).
-    fn sel_knobs(&self) -> &'static [crate::effects::Knob] {
-        THEMES[self.theme_sel].effect.knobs()
+    /// Knobs exposed by the currently highlighted theme (empty = not
+    /// configurable). Palette-first when the theme has colorways.
+    fn sel_knobs(&self) -> Vec<crate::effects::Knob> {
+        crate::config::theme_knobs(self.theme_sel)
     }
 
     /// Nudge the highlighted knob of the highlighted theme. Changes are live and
@@ -377,15 +395,8 @@ impl App {
                 self.refresh_palette();
                 self.persist();
             }
-            // No-motion: keep the palette, park the animation. Lingering
-            // particles are dropped so nothing invisible keeps ticking.
-            KeyCode::Char('m') => {
-                self.no_motion = !self.no_motion;
-                self.theme.effect = self.active_effect();
-                self.theme_target.effect = self.theme.effect;
-                self.sim.sparks.clear();
-                self.persist();
-            }
+            // No-motion: keep the palette, park the animation.
+            KeyCode::Char('m') => self.toggle_motion(),
             // Master effect level: calm every theme down or amp them all up.
             KeyCode::Char('[') => {
                 self.master_intensity = (self.master_intensity - 0.05).max(0.0);

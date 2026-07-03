@@ -152,8 +152,10 @@ pub struct App {
     /// Adjusted with `[`/`]` in the theme modal; persisted.
     pub(super) master_intensity: f32,
     /// Accessibility: keep any palette but force the static (no-op) effect.
-    /// Toggled with `m` in the theme modal; persisted.
+    /// Toggled with `m` (globally or in the theme modal); persisted.
     pub(super) no_motion: bool,
+    /// Scroll offset of the help modal (clamped to content at draw time).
+    pub help_scroll: u16,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -359,6 +361,7 @@ impl App {
             adaptive: settings.adaptive_palette.unwrap_or(false),
             master_intensity: settings.master_intensity.unwrap_or(0.5).clamp(0.0, 1.0),
             no_motion: settings.no_motion.unwrap_or(false),
+            help_scroll: 0,
             wave_art: HashMap::new(),
             art_order: Vec::new(),
             art_pending: None,
@@ -698,6 +701,16 @@ impl App {
 
     /// Current beat onset pulse (0..1) for border animation. Scaled by the active
     /// theme's beat-sync knob so a theme with beat-sync 0 gets a still border.
+    /// Toggle no-motion: keep the palette, park the animation. Available
+    /// globally on `m` and inside the theme modal.
+    pub(super) fn toggle_motion(&mut self) {
+        self.no_motion = !self.no_motion;
+        self.theme.effect = self.active_effect();
+        self.theme_target.effect = self.theme.effect;
+        self.sim.sparks.clear();
+        self.persist();
+    }
+
     /// The effect the current theme should actually run: the theme's own, or
     /// the static no-op when no-motion is on.
     pub(super) fn active_effect(&self) -> &'static dyn crate::effects::ThemeEffect {

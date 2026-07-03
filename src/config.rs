@@ -709,28 +709,366 @@ pub const SCOPE_PRESETS: &[ScopePreset] = &[
 /// An 8-bit RGB anchor pair used to retint the UI for a colorway.
 pub type AnchorPair = ((u8, u8, u8), (u8, u8, u8));
 
-/// UI-palette anchor colors (primary, secondary) for a theme's colorway `k`.
-/// `None` for k = 0 (the theme's own palette) or themes without variants. The
-/// app runs these through the same `retint` used by the adaptive palette, so
-/// a colorway recolors the whole UI coherently, not just the effect.
-pub fn variant_anchors(theme: &str, k: usize) -> Option<AnchorPair> {
-    match (theme, k) {
-        ("crt", 1) => Some(((0x33, 0xff, 0x66), (0x99, 0xff, 0xbb))), // green
-        ("crt", 2) => Some(((0xa8, 0xd8, 0xff), (0xe0, 0xf0, 0xff))), // ice
-        ("radar", 1) => Some(((0xff, 0xb0, 0x30), (0xd8, 0x8a, 0x1a))), // amber
-        ("radar", 2) => Some(((0x8a, 0xd8, 0xff), (0xd0, 0xf0, 0xff))), // arctic
-        ("seismograph", 1) => Some(((0x5a, 0xc8, 0xff), (0xe8, 0xf0, 0xff))), // blueprint
-        ("seismograph", 2) => Some(((0xff, 0x8a, 0x2a), (0xff, 0xd0, 0x4a))), // thermal
-        ("tide", 1) => Some(((0x6a, 0xe8, 0xb8), (0xe0, 0xff, 0xf0))), // lagoon
-        ("tide", 2) => Some(((0x8a, 0x7a, 0xe8), (0xc8, 0xc0, 0xff))), // abyss
-        ("neon sign", 1) => Some(((0x3a, 0xe8, 0xff), (0xff, 0x5a, 0xd8))), // cyan
-        ("neon sign", 2) => Some(((0xff, 0xc8, 0x3a), (0xff, 0x8a, 0x5a))), // gold
-        ("tape deck", 1) => Some(((0xa8, 0xb8, 0xc8), (0xd8, 0xe4, 0xf0))), // chrome
-        ("tape deck", 2) => Some(((0xe8, 0xc0, 0x4a), (0xff, 0xe0, 0x8a))), // gold
-        ("fireflies", 1) => Some(((0xff, 0xa0, 0x3a), (0xff, 0xd8, 0xa0))), // ember
-        ("fireflies", 2) => Some(((0xa8, 0xe8, 0xe8), (0xf0, 0xff, 0xff))), // ghost
-        ("metronome", 1) => Some(((0xd0, 0xd8, 0xe0), (0xf0, 0xf4, 0xff))), // silver
-        ("metronome", 2) => Some(((0xd8, 0x8a, 0x6a), (0xff, 0xd8, 0xc0))), // rosewood
+/// A theme's colorway set: three names (index 0 is always the theme's own
+/// palette) and the UI anchor pairs for variants 1 and 2. Anchors run through
+/// the same `retint` machinery as the adaptive palette, so a colorway
+/// recolors borders, waveform, and accents coherently. Effects with their own
+/// drawn colors (crt, radar, ...) additionally index internal tables with the
+/// same knob value.
+pub struct Colorways {
+    pub names: [&'static str; 3],
+    pub anchors: [AnchorPair; 2],
+}
+
+/// The colorway set for a theme, if it has one. Every selectable theme should
+/// have an entry — static themes get UI-only variants, which is the whole
+/// effect for them.
+pub fn colorways(theme: &str) -> Option<&'static Colorways> {
+    macro_rules! cw {
+        ($n0:literal, $n1:literal, $n2:literal, $p1:expr, $s1:expr, $p2:expr, $s2:expr) => {{
+            static C: Colorways = Colorways {
+                names: [$n0, $n1, $n2],
+                anchors: [($p1, $s1), ($p2, $s2)],
+            };
+            Some(&C)
+        }};
+    }
+    match theme {
+        // -- originals: UI-anchor colorways (overlay identity colors stay) --
+        "midnight" => cw!(
+            "midnight",
+            "harbor",
+            "dusk",
+            (0x4a, 0xd8, 0xc8),
+            (0x8a, 0xe8, 0xe0),
+            (0xff, 0x9a, 0x6a),
+            (0xc8, 0x8a, 0xe8)
+        ),
+        "prismatic" => cw!(
+            "spectrum",
+            "warm",
+            "mono",
+            (0xff, 0xa0, 0x5a),
+            (0xff, 0xd0, 0x8a),
+            (0xc8, 0xd0, 0xdc),
+            (0x9a, 0xa4, 0xb4)
+        ),
+        "trans flow" => cw!(
+            "classic",
+            "pastel",
+            "bold",
+            (0x9a, 0xe0, 0xff),
+            (0xff, 0xc8, 0xd8),
+            (0x2a, 0xb8, 0xf0),
+            (0xf0, 0x7a, 0x9a)
+        ),
+        "ripple" => cw!(
+            "teal",
+            "coral",
+            "violet",
+            (0xff, 0x7a, 0x6a),
+            (0xff, 0xb8, 0x9a),
+            (0x9a, 0x7a, 0xff),
+            (0xc8, 0xb0, 0xff)
+        ),
+        "snow" => cw!(
+            "arctic",
+            "alpenglow",
+            "polar night",
+            (0xff, 0xb8, 0xc8),
+            (0xff, 0xe0, 0xd0),
+            (0x6a, 0x8a, 0xe8),
+            (0xa8, 0xc0, 0xff)
+        ),
+        "cmyk" => cw!(
+            "cmyk",
+            "rgb",
+            "duotone",
+            (0xff, 0x3a, 0x3a),
+            (0x3a, 0x8a, 0xff),
+            (0xff, 0x00, 0x88),
+            (0x00, 0xe8, 0xd0)
+        ),
+        "vaporwave" => cw!(
+            "sunset",
+            "miami",
+            "laserdisc",
+            (0x00, 0xe8, 0xc8),
+            (0xff, 0x8a, 0xd8),
+            (0xff, 0xd0, 0x66),
+            (0x9a, 0x6c, 0xff)
+        ),
+        "america" => cw!(
+            "old glory",
+            "vintage",
+            "neon",
+            (0xc8, 0x6a, 0x5a),
+            (0x8a, 0x9a, 0xc8),
+            (0xff, 0x4a, 0x6a),
+            (0x4a, 0x8a, 0xff)
+        ),
+        "hacker" => cw!(
+            "green",
+            "amber",
+            "paper",
+            (0xff, 0xb0, 0x00),
+            (0xff, 0xd7, 0x66),
+            (0xe8, 0xf0, 0xe8),
+            (0xc0, 0xd0, 0xc0)
+        ),
+        "monster" => cw!(
+            "lime",
+            "toxic",
+            "blood",
+            (0xc8, 0xff, 0x2a),
+            (0x8a, 0xe8, 0x00),
+            (0xff, 0x3a, 0x3a),
+            (0xc0, 0x2a, 0x2a)
+        ),
+        "glitch" => cw!(
+            "green",
+            "cyberpunk",
+            "vhs",
+            (0xff, 0x2a, 0x8a),
+            (0x2a, 0xe8, 0xff),
+            (0xe8, 0xe0, 0xd0),
+            (0x9a, 0x8a, 0xff)
+        ),
+        "datamosh" => cw!(
+            "signalcross",
+            "acid",
+            "shortwave",
+            (0xc8, 0xff, 0x2a),
+            (0xff, 0x8a, 0x2a),
+            (0x4a, 0x9a, 0xff),
+            (0xff, 0x4a, 0x4a)
+        ),
+        "meltdown" => cw!(
+            "magenta",
+            "lava",
+            "ultraviolet",
+            (0xff, 0x6a, 0x2a),
+            (0xff, 0xc8, 0x4a),
+            (0x8a, 0x4a, 0xff),
+            (0xd0, 0x8a, 0xff)
+        ),
+        "electric" => cw!(
+            "cyan",
+            "pink",
+            "storm",
+            (0xff, 0x5a, 0xc8),
+            (0xff, 0xa8, 0xe8),
+            (0xb8, 0xc8, 0xe0),
+            (0x7a, 0x9a, 0xc8)
+        ),
+        "matrix" => cw!(
+            "green",
+            "amber term",
+            "ghost",
+            (0xff, 0xb0, 0x00),
+            (0xff, 0xd7, 0x66),
+            (0xc8, 0xd8, 0xd0),
+            (0x8a, 0xa0, 0x96)
+        ),
+        "aqua" => cw!(
+            "aqua",
+            "kelp",
+            "abyssal",
+            (0x4a, 0xc8, 0x6a),
+            (0xa8, 0xe8, 0x9a),
+            (0x3a, 0x5a, 0xd8),
+            (0x8a, 0xa8, 0xff)
+        ),
+        "cosmic" => cw!(
+            "cosmic",
+            "nebula",
+            "supernova",
+            (0xc8, 0x6a, 0xff),
+            (0xff, 0x9a, 0xd8),
+            (0xff, 0xc8, 0x4a),
+            (0xff, 0x8a, 0x5a)
+        ),
+        "sakura" => cw!(
+            "sakura",
+            "plum",
+            "snowbloom",
+            (0xd8, 0x5a, 0x9a),
+            (0xff, 0xa8, 0xc8),
+            (0xf0, 0xf0, 0xff),
+            (0xd8, 0xc8, 0xe8)
+        ),
+        "rave" => cw!(
+            "club",
+            "laser",
+            "blacklight",
+            (0x2a, 0xff, 0x2a),
+            (0xff, 0x2a, 0x2a),
+            (0x8a, 0x2a, 0xff),
+            (0x2a, 0xd8, 0xff)
+        ),
+        "plasma" => cw!(
+            "plasma",
+            "inferno",
+            "borealis",
+            (0xff, 0x8a, 0x2a),
+            (0xff, 0xd0, 0x4a),
+            (0x4a, 0xe8, 0xa8),
+            (0x8a, 0xd8, 0xff)
+        ),
+        "aurora" => cw!(
+            "aurora",
+            "solar",
+            "ion",
+            (0xff, 0xa0, 0x4a),
+            (0xff, 0xe0, 0x8a),
+            (0x8a, 0x9a, 0xff),
+            (0xd0, 0xa8, 0xff)
+        ),
+        "blackhole" => cw!(
+            "void",
+            "accretion",
+            "hawking",
+            (0xff, 0x9a, 0x3a),
+            (0xff, 0xd8, 0x8a),
+            (0x9a, 0xe8, 0xff),
+            (0xe0, 0xf8, 0xff)
+        ),
+        "fireplace" => cw!(
+            "hearth",
+            "embers",
+            "blue flame",
+            (0xd8, 0x3a, 0x1a),
+            (0xff, 0x8a, 0x3a),
+            (0x5a, 0x9a, 0xff),
+            (0xa8, 0xd0, 0xff)
+        ),
+        "thunderstorm" => cw!(
+            "storm",
+            "monsoon",
+            "heat",
+            (0x4a, 0xc8, 0xb0),
+            (0xa8, 0xe8, 0xd8),
+            (0xff, 0xb0, 0x5a),
+            (0xff, 0xe0, 0xa0)
+        ),
+        "circuit" => cw!(
+            "teal",
+            "copper",
+            "fiber",
+            (0xff, 0x9a, 0x4a),
+            (0xd8, 0x6a, 0x2a),
+            (0xff, 0x5a, 0xd8),
+            (0x5a, 0xd8, 0xff)
+        ),
+        "constellations" => cw!(
+            "starlight",
+            "zodiac",
+            "dawn",
+            (0xd8, 0xb0, 0xff),
+            (0xff, 0xd8, 0x8a),
+            (0xff, 0xb8, 0x9a),
+            (0xff, 0xe8, 0xc8)
+        ),
+        // -- newer themes: anchors match their effect-internal color tables --
+        "crt" => cw!(
+            "amber",
+            "green",
+            "ice",
+            (0x33, 0xff, 0x66),
+            (0x99, 0xff, 0xbb),
+            (0xa8, 0xd8, 0xff),
+            (0xe0, 0xf0, 0xff)
+        ),
+        "radar" => cw!(
+            "green",
+            "amber",
+            "arctic",
+            (0xff, 0xb0, 0x30),
+            (0xd8, 0x8a, 0x1a),
+            (0x8a, 0xd8, 0xff),
+            (0xd0, 0xf0, 0xff)
+        ),
+        "seismograph" => cw!(
+            "classic",
+            "blueprint",
+            "thermal",
+            (0x5a, 0xc8, 0xff),
+            (0xe8, 0xf0, 0xff),
+            (0xff, 0x8a, 0x2a),
+            (0xff, 0xd0, 0x4a)
+        ),
+        "tide" => cw!(
+            "ocean",
+            "lagoon",
+            "abyss",
+            (0x6a, 0xe8, 0xb8),
+            (0xe0, 0xff, 0xf0),
+            (0x8a, 0x7a, 0xe8),
+            (0xc8, 0xc0, 0xff)
+        ),
+        "neon sign" => cw!(
+            "magenta",
+            "cyan",
+            "gold",
+            (0x3a, 0xe8, 0xff),
+            (0xff, 0x5a, 0xd8),
+            (0xff, 0xc8, 0x3a),
+            (0xff, 0x8a, 0x5a)
+        ),
+        "tape deck" => cw!(
+            "oxide",
+            "chrome",
+            "gold",
+            (0xa8, 0xb8, 0xc8),
+            (0xd8, 0xe4, 0xf0),
+            (0xe8, 0xc0, 0x4a),
+            (0xff, 0xe0, 0x8a)
+        ),
+        "fireflies" => cw!(
+            "meadow",
+            "ember",
+            "ghost",
+            (0xff, 0xa0, 0x3a),
+            (0xff, 0xd8, 0xa0),
+            (0xa8, 0xe8, 0xe8),
+            (0xf0, 0xff, 0xff)
+        ),
+        "metronome" => cw!(
+            "brass",
+            "silver",
+            "rosewood",
+            (0xd0, 0xd8, 0xe0),
+            (0xf0, 0xf4, 0xff),
+            (0xd8, 0x8a, 0x6a),
+            (0xff, 0xd8, 0xc0)
+        ),
         _ => None,
     }
+}
+
+/// Anchor pair for colorway `k` (1 or 2) of a theme; `None` keeps the base.
+pub fn variant_anchors(theme: &str, k: usize) -> Option<AnchorPair> {
+    colorways(theme).and_then(|c| (1..=2).contains(&k).then(|| c.anchors[k - 1]))
+}
+
+/// Colorway names for the Palette knob, empty when a theme has none.
+pub fn variant_names(theme: &str) -> &'static [&'static str] {
+    colorways(theme).map(|c| &c.names[..]).unwrap_or(&[])
+}
+
+/// The knob list for a theme: a Palette knob whenever the theme has
+/// colorways (even for shared/static effects, whose colorway is purely the
+/// UI retint), followed by the effect's own knobs.
+pub fn theme_knobs(idx: usize) -> Vec<crate::effects::Knob> {
+    let th = &THEMES[idx];
+    let mut v = Vec::new();
+    if colorways(th.name).is_some() {
+        v.push(crate::effects::Knob::Palette);
+    }
+    for k in th.effect.knobs() {
+        if *k != crate::effects::Knob::Palette {
+            v.push(*k);
+        }
+    }
+    v
 }
