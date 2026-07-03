@@ -96,6 +96,46 @@ impl App {
         }
     }
 
+    /// The next `n` tracks in play order, for the up-next view: the shuffle
+    /// bag, the explicit queue (wrapping on LoopMode::All), or the tree list.
+    pub fn upcoming_tracks(&self, n: usize) -> Vec<PathBuf> {
+        if self.loop_mode == LoopMode::One {
+            return self.now_playing.iter().cloned().collect();
+        }
+        if self.shuffle {
+            return self.shuffle_bag.iter().take(n).cloned().collect();
+        }
+        if let Some(np) = self.now_playing.as_ref()
+            && let Some(i) = self.queue.iter().position(|x| x == np)
+        {
+            let mut out: Vec<PathBuf> = self.queue.iter().skip(i + 1).take(n).cloned().collect();
+            if self.loop_mode == LoopMode::All && out.len() < n {
+                out.extend(self.queue.iter().take(n - out.len()).cloned());
+            }
+            return out;
+        }
+        let list = self.current_media();
+        let Some(cur) = self
+            .now_playing
+            .as_ref()
+            .and_then(|p| list.iter().position(|x| x == p))
+        else {
+            return list.into_iter().take(n).collect();
+        };
+        let mut out = Vec::new();
+        for k in 1..=n {
+            let idx = cur + k;
+            if idx < list.len() {
+                out.push(list[idx].clone());
+            } else if self.loop_mode == LoopMode::All && !list.is_empty() {
+                out.push(list[idx % list.len()].clone());
+            } else {
+                break;
+            }
+        }
+        out
+    }
+
     /// `n`: next track. Queue-first (starting the queue if nothing in it is
     /// playing yet, wrapping at the end); otherwise the tree list.
     pub(super) fn play_next(&mut self) {

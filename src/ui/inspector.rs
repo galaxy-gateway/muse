@@ -30,6 +30,7 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         crate::config::WaveView::Bitrate => draw_bitrate(f, app, rows[1]),
         crate::config::WaveView::Dynamics => draw_dynamics(f, app, rows[1]),
         crate::config::WaveView::BeatMap => draw_beat_map(f, app, rows[1]),
+        crate::config::WaveView::UpNext => draw_up_next(f, app, rows[1]),
     }
     draw_scope(f, app, rows[2]);
 }
@@ -665,6 +666,82 @@ fn draw_beat_map(f: &mut Frame, app: &App, area: Rect) {
         }
     }
     playhead_column(f, app, inner, progress);
+}
+
+/// Up next: the current track with a mini progress bar, then the upcoming
+/// tracks in true play order (queue / shuffle bag / tree + loop mode).
+fn draw_up_next(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let block = panel_hint(
+        "up next",
+        border(t, app.frame, t.wave, 0.42, app.beat_pulse()),
+        "W next view",
+        t.dim,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 8 || inner.height < 2 {
+        return;
+    }
+    let row_of = |p: &std::path::Path, prefix: &str, col: ratatui::style::Color| -> Line {
+        let meta = app.meta_cache.get(p);
+        let name = meta
+            .filter(|m| !m.title.is_empty())
+            .map(|m| m.title.clone())
+            .unwrap_or_else(|| {
+                p.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
+        let dur = meta
+            .map(|m| fmt_time(m.duration))
+            .unwrap_or_else(|| "-:--".into());
+        Line::from(vec![
+            Span::styled(prefix.to_string(), Style::default().fg(t.dim)),
+            Span::styled(name, Style::default().fg(col)),
+            Span::styled(format!("  {dur}"), Style::default().fg(t.dim)),
+        ])
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(np) = &app.now_playing {
+        lines.push(row_of(np, " ♪ ", t.playing));
+        // Mini progress bar under the current track.
+        let progress = np_progress(app).max(0.0);
+        let w = inner.width.saturating_sub(4) as usize;
+        let filled = (progress * w as f64).round() as usize;
+        lines.push(Line::from(vec![
+            Span::raw("   "),
+            Span::styled("━".repeat(filled), Style::default().fg(t.playing)),
+            Span::styled(
+                "─".repeat(w.saturating_sub(filled)),
+                Style::default().fg(t.dim),
+            ),
+        ]));
+        lines.push(Line::from(""));
+    }
+    let upcoming = app.upcoming_tracks(inner.height.saturating_sub(3) as usize);
+    if upcoming.is_empty() {
+        lines.push(Line::from(Span::styled(
+            if app.now_playing.is_some() {
+                "  end of the line (loop off)"
+            } else {
+                "  nothing queued"
+            },
+            Style::default().fg(t.dim),
+        )));
+    }
+    for (i, p) in upcoming.iter().enumerate() {
+        let prefix = format!(" {} ", i + 1);
+        lines.push(row_of(p, &prefix, t.media));
+    }
+    f.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            x: inner.x + 1,
+            width: inner.width.saturating_sub(1),
+            ..inner
+        },
+    );
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport
