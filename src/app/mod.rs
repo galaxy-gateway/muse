@@ -676,8 +676,11 @@ impl App {
     /// Whether the active wave-pane view reads the analysis cache — the
     /// worker only runs when something will actually draw the result.
     pub fn wave_view_needs_analysis(&self) -> bool {
-        // Grows as data views land (spectrogram / bands / bitrate / dynamics).
-        false
+        use crate::config::WaveView;
+        matches!(
+            crate::config::WAVE_VIEWS[self.wave_view_idx].0,
+            WaveView::Spectrogram
+        )
     }
 
     fn evict_wave(&mut self) {

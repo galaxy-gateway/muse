@@ -25,6 +25,7 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         crate::config::WaveView::Waveform => {
             draw_waveform(f, app, rows[1], app.now_playing.clone(), "waveform", true)
         }
+        crate::config::WaveView::Spectrogram => draw_spectrogram(f, app, rows[1]),
     }
     draw_scope(f, app, rows[2]);
 }
@@ -252,6 +253,102 @@ pub(super) fn draw_copy_button(f: &mut Frame, app: &App, btn: Option<Rect>, flas
     let cell = &mut f.buffer_mut()[(btn.x + btn.width / 2, btn.y)];
     cell.set_symbol(glyph);
     cell.set_fg(color);
+}
+
+/// Playhead progress fraction for the now-playing track, or -1.0.
+fn np_progress(app: &App) -> f64 {
+    let d = app.engine.duration_secs();
+    if app.now_playing.is_some() && d > 0.0 {
+        (app.engine.position_secs() / d).clamp(0.0, 1.0)
+    } else {
+        -1.0
+    }
+}
+
+/// Spectrogram strip: time on x, pseudo-frequency on y (bass at the bottom),
+/// colored by band energy through a theme-aware heat gradient. Built from the
+/// analysis cache (three bands interpolated vertically with triangular
+/// weights); static per track, so only the playhead column changes per frame.
+fn draw_spectrogram(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let block = panel_hint(
+        "spectrogram",
+        border(t, app.frame, t.wave, 0.42, app.beat_pulse()),
+        "W next view",
+        t.dim,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 4 || inner.height < 2 {
+        return;
+    }
+    let analysis = app
+        .now_playing
+        .as_ref()
+        .and_then(|p| app.analysis_cache.get(p));
+    let Some(a) = analysis else {
+        let msg = if app.now_playing.is_some() {
+            "analyzing…"
+        } else {
+            "nothing playing"
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(msg, Style::default().fg(t.dim))),
+            Rect {
+                x: inner.x + 1,
+                y: inner.y + inner.height / 2,
+                width: inner.width.saturating_sub(1),
+                height: 1,
+            },
+            );
+        return;
+    };
+    let n = a.bands.len().max(1);
+    let progress = np_progress(app);
+    let cold = crate::color::scale(t.wave, 0.18);
+    let buf = f.buffer_mut();
+    for cx in 0..inner.width {
+        let bi = (cx as usize * n / inner.width as usize).min(n - 1);
+        let (b, m, tr) = a.bands[bi];
+        let is_played = progress >= 0.0 && (cx as f64 / inner.width as f64) <= progress;
+        for cy in 0..inner.height {
+            // Pseudo-frequency: bottom row = bass, middle = mid, top = treble,
+            // triangular interpolation between the three bands.
+            let ff = if inner.height > 1 {
+                1.0 - cy as f64 / (inner.height - 1) as f64
+            } else {
+                0.0
+            };
+            let wb = (1.0 - ff * 2.0).max(0.0);
+            let wm = (1.0 - (ff - 0.5).abs() * 2.0).max(0.0);
+            let wt = (ff * 2.0 - 1.0).max(0.0);
+            let e = (b as f64 * wb + m as f64 * wm + tr as f64 * wt).clamp(0.0, 1.0);
+            // Heat: cold wave -> wave -> playing, quantized for diff stability.
+            let e = crate::color::quant(e, 12.0);
+            let col = if e < 0.5 {
+                mix(cold, t.wave, e * 2.0)
+            } else {
+                mix(t.wave, t.playing, (e - 0.5) * 2.0)
+            };
+            let col = if is_played {
+                col
+            } else {
+                crate::color::scale(col, 0.55)
+            };
+            let cell = &mut buf[(inner.x + cx, inner.y + cy)];
+            cell.set_char('█');
+            cell.set_fg(col);
+        }
+    }
+    // Playhead column.
+    if progress >= 0.0 {
+        let px = inner.x + ((progress * (inner.width - 1) as f64).round() as u16);
+        for cy in 0..inner.height {
+            let cell = &mut buf[(px, inner.y + cy)];
+            cell.set_char('│');
+            cell.set_fg(t.playing);
+        }
+    }
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport

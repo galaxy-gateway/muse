@@ -521,10 +521,14 @@ pub struct ScopePreset {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WaveView {
     Waveform,
+    Spectrogram,
 }
 
 /// Cycle order + display names for the wave-pane views.
-pub const WAVE_VIEWS: &[(WaveView, &str)] = &[(WaveView::Waveform, "waveform")];
+pub const WAVE_VIEWS: &[(WaveView, &str)] = &[
+    (WaveView::Waveform, "waveform"),
+    (WaveView::Spectrogram, "spectrogram"),
+];
 
 /// Persisted user settings (TOML at the platform config dir).
 #[derive(Serialize, Deserialize, Default)]
