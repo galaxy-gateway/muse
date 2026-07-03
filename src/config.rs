@@ -528,6 +528,7 @@ pub enum WaveView {
     BeatMap,
     UpNext,
     ArtCard,
+    Lyrics,
 }
 
 /// Cycle order + display names for the wave-pane views.
@@ -540,6 +541,7 @@ pub const WAVE_VIEWS: &[(WaveView, &str)] = &[
     (WaveView::BeatMap, "beat map"),
     (WaveView::UpNext, "up next"),
     (WaveView::ArtCard, "art"),
+    (WaveView::Lyrics, "lyrics"),
 ];
 
 /// Persisted user settings (TOML at the platform config dir).

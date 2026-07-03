@@ -260,6 +260,70 @@ fn folder_cover(path: &Path) -> Option<Vec<u8>> {
 /// An 8-bit RGB triple (kept UI-toolkit-agnostic on purpose).
 pub type Rgb8 = (u8, u8, u8);
 
+/// Track lyrics: timestamped when a source provides sync, plain otherwise.
+pub enum Lyrics {
+    /// (seconds, line) pairs sorted by time.
+    Synced(Vec<(f64, String)>),
+    Plain(Vec<String>),
+}
+
+/// Load lyrics for a track: an `.lrc` sidecar next to the file first, then an
+/// embedded lyrics tag. Sidecar/tag text containing `[mm:ss..]` stamps parses
+/// as synced; anything else is plain lines. `None` when nothing exists.
+pub fn lyrics_for(path: &Path) -> Option<Lyrics> {
+    for ext in ["lrc", "LRC"] {
+        let side = path.with_extension(ext);
+        if let Ok(text) = std::fs::read_to_string(&side) {
+            return Some(parse_lyrics(&text));
+        }
+    }
+    let tagged = lofty::read_from_path(path).ok()?;
+    use lofty::file::TaggedFileExt;
+    use lofty::tag::ItemKey;
+    let text = tagged
+        .primary_tag()
+        .or_else(|| tagged.first_tag())
+        .and_then(|t| t.get_string(ItemKey::Lyrics))
+        .filter(|s| !s.trim().is_empty())?
+        .to_string();
+    Some(parse_lyrics(&text))
+}
+
+/// Parse lyric text: LRC timestamp lines (`[mm:ss.xx]words`, multiple stamps
+/// per line allowed) become synced; metadata tags (`[ar:...]`) are skipped;
+/// text without any stamps falls back to plain lines.
+pub fn parse_lyrics(text: &str) -> Lyrics {
+    let mut synced: Vec<(f64, String)> = Vec::new();
+    let mut any_stamp = false;
+    for raw in text.lines() {
+        let mut rest = raw.trim();
+        let mut stamps: Vec<f64> = Vec::new();
+        while rest.starts_with('[') {
+            let Some(end) = rest.find(']') else { break };
+            let inner = &rest[1..end];
+            rest = rest[end + 1..].trim_start();
+            // [mm:ss] / [mm:ss.xx] — anything else ([ar:], [ti:]) is metadata.
+            let mut it = inner.splitn(2, ':');
+            let (Some(m), Some(s)) = (it.next(), it.next()) else {
+                continue;
+            };
+            if let (Ok(m), Ok(s)) = (m.parse::<f64>(), s.parse::<f64>()) {
+                stamps.push(m * 60.0 + s);
+                any_stamp = true;
+            }
+        }
+        for t in stamps {
+            synced.push((t, rest.to_string()));
+        }
+    }
+    if any_stamp {
+        synced.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        Lyrics::Synced(synced)
+    } else {
+        Lyrics::Plain(text.lines().map(|l| l.trim_end().to_string()).collect())
+    }
+}
+
 /// Two dominant vivid colors of a decoded cover thumbnail, as (primary,
 /// secondary) RGB triples. Coarse 4-bit-per-channel histogram over a
 /// subsampled pixel grid, weighted by saturation x value so vivid album
@@ -378,6 +442,29 @@ pub fn dominant_colors(img: &image::RgbImage) -> Option<(Rgb8, Rgb8)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lrc_parses_synced_and_skips_metadata() {
+        let text = "[ar:Someone]\n[00:01.50]first line\n[00:03][00:05.2]repeated\n";
+        match parse_lyrics(text) {
+            Lyrics::Synced(v) => {
+                assert_eq!(v.len(), 3);
+                assert!((v[0].0 - 1.5).abs() < 1e-9);
+                assert_eq!(v[0].1, "first line");
+                assert_eq!(v[1].1, "repeated");
+                assert!((v[2].0 - 5.2).abs() < 1e-9);
+            }
+            _ => panic!("expected synced"),
+        }
+    }
+
+    #[test]
+    fn plain_text_lyrics_fall_back() {
+        match parse_lyrics("just words\nno stamps") {
+            Lyrics::Plain(v) => assert_eq!(v.len(), 2),
+            _ => panic!("expected plain"),
+        }
+    }
 
     #[test]
     fn dominant_colors_single_hue_cover() {

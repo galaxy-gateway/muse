@@ -32,6 +32,7 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         crate::config::WaveView::BeatMap => draw_beat_map(f, app, rows[1]),
         crate::config::WaveView::UpNext => draw_up_next(f, app, rows[1]),
         crate::config::WaveView::ArtCard => draw_art_card(f, app, rows[1]),
+        crate::config::WaveView::Lyrics => draw_lyrics(f, app, rows[1]),
     }
     draw_scope(f, app, rows[2]);
 }
@@ -866,6 +867,97 @@ fn draw_art_card(f: &mut Frame, app: &App, area: Rect) {
         ..inner
     };
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), text);
+}
+
+/// Lyrics: synced lines highlight and auto-center against the playhead;
+/// plain lyrics scroll proportionally to progress.
+fn draw_lyrics(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let block = panel_hint(
+        "lyrics",
+        border(t, app.frame, t.wave, 0.42, app.beat_pulse()),
+        "W next view",
+        t.dim,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 8 || inner.height < 2 {
+        return;
+    }
+    let lyr = app
+        .now_playing
+        .as_ref()
+        .and_then(|p| app.lyrics_cache.get(p))
+        .and_then(|o| o.as_ref());
+    let Some(lyr) = lyr else {
+        let msg = if app.now_playing.is_some() {
+            "no lyrics (.lrc sidecar or embedded tag)"
+        } else {
+            "nothing playing"
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(msg, Style::default().fg(t.dim))),
+            Rect {
+                x: inner.x + 1,
+                y: inner.y + inner.height / 2,
+                width: inner.width - 1,
+                height: 1,
+            },
+        );
+        return;
+    };
+    let pos = app.engine.position_secs();
+    let h = inner.height as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    match lyr.as_ref() {
+        crate::media::Lyrics::Synced(rows) => {
+            // Current = last stamped line at or before the playhead.
+            let cur = rows
+                .iter()
+                .rposition(|(ts, _)| *ts <= pos)
+                .unwrap_or(0);
+            // Center the current line in the window.
+            let start = cur.saturating_sub(h / 2);
+            for (i, (_, text)) in rows.iter().enumerate().skip(start).take(h) {
+                let (col, bold) = if i == cur {
+                    (t.playing, true)
+                } else if i < cur {
+                    (crate::color::scale(t.media, 0.45), false)
+                } else {
+                    (t.media, false)
+                };
+                let style = if bold {
+                    Style::default().fg(col).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(col)
+                };
+                let prefix = if i == cur { "▸ " } else { "  " };
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(t.accent)),
+                    Span::styled(text.clone(), style),
+                ]));
+            }
+        }
+        crate::media::Lyrics::Plain(rows) => {
+            // No sync: scroll proportionally to playhead progress.
+            let frac = np_progress(app).max(0.0);
+            let start = ((rows.len().saturating_sub(h)) as f64 * frac).round() as usize;
+            for text in rows.iter().skip(start).take(h) {
+                lines.push(Line::from(Span::styled(
+                    format!("  {text}"),
+                    Style::default().fg(t.media),
+                )));
+            }
+        }
+    }
+    f.render_widget(
+        Paragraph::new(lines),
+        Rect {
+            x: inner.x + 1,
+            width: inner.width.saturating_sub(1),
+            ..inner
+        },
+    );
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport

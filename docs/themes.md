@@ -139,3 +139,14 @@ Also in this release: seismograph ink TINTS text it crosses instead of
 overwriting glyphs (`ink_cell`), and the metronome grew a full-height
 pendulum arm hung from the top of the screen (glyph-tinting like the radar
 beam), with its bob flaring on each strike.
+
+## Inspector wave-pane views (v0.57-v0.64)
+
+The inspector's middle panel is a cycleable view (`W`, persisted):
+waveform · spectrogram · bands · bitrate · dynamics · beat map · up next ·
+art · lyrics. The data views (spectrogram/bands/bitrate/dynamics) read a
+per-track analysis (band energy, RMS, packet bitrate) computed lazily by a
+single-slot worker (`audio::analyze_track`) only while such a view is active.
+The beat map logs live onsets against the playhead as you listen; lyrics load
+from `.lrc` sidecars or embedded tags, sync-highlighted when stamped. All
+time-axis views keep click-to-seek and the playhead column.

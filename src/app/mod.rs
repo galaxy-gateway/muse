@@ -173,6 +173,10 @@ pub struct App {
     pub(super) beat_log_order: Vec<PathBuf>,
     /// Previous tick's band pulses, for onset edge detection.
     pub(super) prev_bands: [f32; 3],
+    /// Lyrics per track (`None` = probed, nothing found), loaded on demand
+    /// when the lyrics view is active. Bounded.
+    pub lyrics_cache: HashMap<PathBuf, Option<Arc<crate::media::Lyrics>>>,
+    pub(super) lyrics_order: Vec<PathBuf>,
 
     /// Decoded embedded cover art per track (`None` = no art); built off-thread.
     /// LRU-bounded — cover thumbnails are ~0.75 MB each, so an unbounded map here
@@ -388,6 +392,8 @@ impl App {
             beat_log: HashMap::new(),
             beat_log_order: Vec::new(),
             prev_bands: [0.0; 3],
+            lyrics_cache: HashMap::new(),
+            lyrics_order: Vec::new(),
             wave_view_idx: settings
                 .wave_view
                 .as_deref()
@@ -1123,6 +1129,23 @@ impl App {
                     } else if since.elapsed().as_millis() < 150 {
                         // Still in debounce window, re-queue it.
                         self.art_want = Some((path, since));
+                    }
+                }
+                // Lyrics view: load on first sight of a track (a sidecar
+                // read or one tag probe — ms), remembering misses so a track
+                // without lyrics costs one probe total.
+                if matches!(
+                    crate::config::WAVE_VIEWS[self.wave_view_idx].0,
+                    crate::config::WaveView::Lyrics
+                ) && let Some(np) = self.now_playing.clone()
+                    && !self.lyrics_cache.contains_key(&np)
+                {
+                    let lyr = crate::media::lyrics_for(&np).map(Arc::new);
+                    self.lyrics_cache.insert(np.clone(), lyr);
+                    touch_lru(&mut self.lyrics_order, &np);
+                    while self.lyrics_order.len() > 16 {
+                        let old = self.lyrics_order.remove(0);
+                        self.lyrics_cache.remove(&old);
                     }
                 }
                 // Demand-driven analysis for the data views: when the active
