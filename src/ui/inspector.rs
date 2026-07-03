@@ -31,6 +31,7 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
         crate::config::WaveView::Dynamics => draw_dynamics(f, app, rows[1]),
         crate::config::WaveView::BeatMap => draw_beat_map(f, app, rows[1]),
         crate::config::WaveView::UpNext => draw_up_next(f, app, rows[1]),
+        crate::config::WaveView::ArtCard => draw_art_card(f, app, rows[1]),
     }
     draw_scope(f, app, rows[2]);
 }
@@ -742,6 +743,129 @@ fn draw_up_next(f: &mut Frame, app: &App, area: Rect) {
             ..inner
         },
     );
+}
+
+/// Art card: the cover rendered big (half-blocks — always works), with the
+/// dominant-color swatches the adaptive palette uses and the track's tags.
+fn draw_art_card(f: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
+    let block = panel_hint(
+        "art",
+        border(t, app.frame, t.wave, 0.42, app.beat_pulse()),
+        "W next view",
+        t.dim,
+    );
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width < 12 || inner.height < 4 {
+        return;
+    }
+    let Some(np) = &app.now_playing else {
+        f.render_widget(
+            Paragraph::new(Span::styled("nothing playing", Style::default().fg(t.dim))),
+            Rect {
+                x: inner.x + 1,
+                y: inner.y + inner.height / 2,
+                width: inner.width - 1,
+                height: 1,
+            },
+        );
+        return;
+    };
+    let art = app.wave_art.get(np).and_then(|a| a.as_ref());
+    // Left: the cover, square-ish given the 2:1 cell aspect.
+    let art_w = (inner.height * 2).min(inner.width / 2);
+    let art_rect = Rect {
+        width: art_w,
+        ..inner
+    };
+    match art {
+        Some(img) => fill_album_art(f, app, art_rect, img, 100),
+        None => {
+            f.render_widget(
+                Paragraph::new(Span::styled("no cover", Style::default().fg(t.dim))),
+                Rect {
+                    x: art_rect.x + art_w.saturating_sub(8) / 2,
+                    y: art_rect.y + art_rect.height / 2,
+                    width: 8.min(art_rect.width),
+                    height: 1,
+                },
+            );
+        }
+    }
+    // Right: tags + the extracted swatches.
+    let meta = app.meta_cache.get(np);
+    let mut lines: Vec<Line> = Vec::new();
+    let title = meta
+        .filter(|m| !m.title.is_empty())
+        .map(|m| m.title.clone())
+        .unwrap_or_else(|| {
+            np.file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
+    lines.push(Line::from(Span::styled(
+        title,
+        Style::default().fg(t.playing).add_modifier(Modifier::BOLD),
+    )));
+    if let Some(m) = meta {
+        if !m.artist.is_empty() {
+            lines.push(Line::from(Span::styled(
+                m.artist.clone(),
+                Style::default().fg(t.media),
+            )));
+        }
+        if !m.album.is_empty() {
+            lines.push(Line::from(Span::styled(
+                m.album.clone(),
+                Style::default().fg(t.dim),
+            )));
+        }
+        if !m.genre.is_empty() {
+            lines.push(Line::from(Span::styled(
+                m.genre.clone(),
+                Style::default().fg(t.dim),
+            )));
+        }
+    }
+    if let Some(img) = art
+        && let Some((p, s)) = crate::media::dominant_colors(img)
+    {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "████ ",
+                Style::default().fg(Color::Rgb(p.0, p.1, p.2)),
+            ),
+            Span::styled(
+                format!("#{:02x}{:02x}{:02x}  ", p.0, p.1, p.2),
+                Style::default().fg(t.dim),
+            ),
+            Span::styled(
+                "████ ",
+                Style::default().fg(Color::Rgb(s.0, s.1, s.2)),
+            ),
+            Span::styled(
+                format!("#{:02x}{:02x}{:02x}", s.0, s.1, s.2),
+                Style::default().fg(t.dim),
+            ),
+        ]));
+    }
+    if let Some(m) = meta {
+        lines.push(Line::from(""));
+        for (k, v) in &m.fields {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{k}  "), Style::default().fg(t.dim)),
+                Span::styled(v.clone(), Style::default().fg(t.media)),
+            ]));
+        }
+    }
+    let text = Rect {
+        x: inner.x + art_w + 2,
+        width: inner.width.saturating_sub(art_w + 2),
+        ..inner
+    };
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), text);
 }
 
 /// Render a waveform for `path`. `with_playhead` overlays the live transport
