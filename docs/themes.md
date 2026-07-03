@@ -36,11 +36,11 @@ plus two newer ones:
 |---|---|---|
 | crt | amber phosphor: scanline sweep, shadow-mask rows, vignette, bass tube flicker, nav afterglow | persistence, beat source |
 | tape deck | wow/flutter row shifts on the waveform, hiss dither on blank cells, rewind smear on track change | disruption |
-| seismograph | red pen inks live amplitude onto a right-to-left scrolling drum (particle sim = drum memory); nav knocks the pen | speed (paper), persistence (ink) |
+| seismograph | three-channel strip recorder: bass/mid/treble pens in distinct inks on stacked baselines, scrolling time grid, track-change event stamps, nav knocks every pen (v0.54.0) | speed (paper), persistence (ink) |
 | metronome | pendulum tick on the transport bar phase-locked via tempo_phase2, bpm readout when locked | beat sync, speed (idle sway) |
 | tide | water band above the transport, bass swell, wind-drifted spray, underwater text tinting | wind, beat source |
 | fireflies | steered wander (ambient mutates particle velocities), treble flares, hover = lantern | density, follow mouse |
-| radar | rotating sweep in the scope panel; band onsets drop fading blips (bass inner, treble rim) | speed, persistence |
+| radar | full-screen PPI sweep tinting the UI it passes over; band onsets drop drifting contacts (bass inner, treble rim) that re-light each beam pass (v0.54.0) | speed, persistence, density |
 | neon sign | per-glyph gas flicker over the now-playing panel, dead-tube letters, whole-sign dropouts, bass buzz | intensity, speed |
 
 ## Global modifiers (v0.48-v0.53)
