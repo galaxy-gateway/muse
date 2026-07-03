@@ -782,6 +782,17 @@ impl App {
         self.beat.pulse() * self.scaled_tuning().beat_sync
     }
 
+    /// Whether the main loop should lower the tick redraw rate: paused with
+    /// an animated theme idling along. Saves the CPU the old overlay
+    /// decimation was after, without its on/off strobe. Full rate resumes for
+    /// crossfades and the theme picker's live preview.
+    pub fn effect_decimate(&self) -> bool {
+        !self.engine.is_playing()
+            && self.theme.effect.is_animated()
+            && self.theme_fade.is_none()
+            && !self.show_theme
+    }
+
     /// Whether `p` lives inside the current root directory. Compares canonical
     /// forms so a relative launch dir or symlinks still match; falls back to a
     /// plain prefix check when either path can't be canonicalized.

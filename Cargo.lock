@@ -1347,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "muse"
-version = "0.53.1"
+version = "0.53.2"
 dependencies = [
  "anyhow",
  "arboard",

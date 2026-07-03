@@ -51,16 +51,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_inspector(f, app, cols[1]);
     draw_transport(f, app, root[1]);
 
-    // The active theme's effect paints any overlay (particles, sprites, glitch).
+    // The active theme's effect paints any overlay (particles, sprites,
+    // glitch) on EVERY drawn frame. Never decimate the overlay itself:
+    // drawing alternating frames with and without it strobes the whole
+    // effect on/off (and doubles the redraw churn as cells toggle). The
+    // paused-CPU saving lives in the main loop instead, which lowers the
+    // tick REDRAW rate while paused (`App::effect_decimate`) so every frame
+    // that reaches the terminal is consistent.
     let ctx = app.frame_ctx();
-    // When paused and particles are empty, decimate overlay (skip 3 of 4 frames).
-    let skip_effect = !app.engine.is_playing()
-        && app.sim.is_empty()
-        && app.theme.effect.is_animated()
-        && !app.frame.is_multiple_of(4);
-    if !skip_effect {
-        app.theme.effect.overlay(f, &app.sim, &ctx);
-    }
+    app.theme.effect.overlay(f, &app.sim, &ctx);
     draw_hover_seek(f, app);
 
     // Render crisp cover thumbnails out-of-band over the cells the panels

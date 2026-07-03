@@ -194,10 +194,17 @@ fn run(
         // draw immediately; ticks only when not idle; inputs and mouse moves
         // are rate-limited to ~60fps. A skipped input settles on the next
         // batch via needs_settle, so the final frame of a burst never goes
-        // stale.
+        // stale. Paused with an animated theme, tick redraws drop to ~15fps
+        // (every frame stays complete — the overlay is never omitted, which
+        // used to strobe it on and off).
         let fresh = last_draw.elapsed() >= min_frame;
+        let tick_min = if app.effect_decimate() {
+            min_frame * 4
+        } else {
+            min_frame
+        };
         let should_draw = got_other
-            || (got_tick && !app.idle && fresh)
+            || (got_tick && !app.idle && last_draw.elapsed() >= tick_min)
             || (got_input && fresh)
             || (got_mouse_move && last_mouse_draw.elapsed() >= min_frame);
         if got_input && !should_draw {

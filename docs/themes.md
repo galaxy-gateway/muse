@@ -86,3 +86,11 @@ cut the churn 60-80% with no visible loss. Rules of thumb:
   to identical RGB and the diff skips the cell.
 - Full-screen tint loops must skip `FrameCtx::np_thumb` — repainting cells
   under the graphics-protocol cover image makes the terminal blink it.
+
+Addendum (v0.53.2): never decimate the overlay itself. v0.37.0's paused-CPU
+saving skipped the effect overlay on 3 of 4 frames, which strobed any
+large-area theme on and off at 15Hz while paused (invisible on the old
+beat-gated/sparse themes). The overlay now draws on every frame that reaches
+the terminal; the saving moved to the main loop, which lowers the paused
+tick-redraw rate to ~15fps (`App::effect_decimate`) so every frame is
+complete and consistent.
