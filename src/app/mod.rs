@@ -472,6 +472,11 @@ impl App {
         // first frame (set_theme applies it on later switches).
         app.theme.effect = app.active_effect();
         app.theme_target.effect = app.theme.effect;
+        // A persisted colorway (palette knob) must land before the first
+        // frame too — compute the real target and snap to it, no fade.
+        app.refresh_palette();
+        app.theme = app.theme_target;
+        app.theme_fade = None;
         app.on_selection_changed();
         app.restore_session(&settings);
         Ok(app)
@@ -740,7 +745,15 @@ impl App {
     /// now-playing cover art when adaptive is on) and start a crossfade
     /// toward it if it isn't already where we're headed.
     pub(super) fn refresh_palette(&mut self) {
-        let base = THEMES[self.theme_idx];
+        let mut base = THEMES[self.theme_idx];
+        // Colorway variant first: the palette knob recolors the whole UI via
+        // the same retint machinery the adaptive palette uses.
+        let pal_k = self.tunings[self.theme_idx].choice(crate::effects::Knob::Palette);
+        if pal_k > 0
+            && let Some((p, s)) = crate::config::variant_anchors(base.name, pal_k)
+        {
+            base = retint(&base, p, s);
+        }
         let mut target = if self.adaptive {
             self.now_playing
                 .as_ref()

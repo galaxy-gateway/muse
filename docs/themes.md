@@ -105,3 +105,29 @@ picker animates ONLY the highlighted row's swatch: running every row's
 border animation at once (v0.53.0) made the list a wall of unsynchronized
 color flashes, and the highlighted theme already previews across the whole
 UI.
+
+## Colorways (v0.55.0)
+
+Themes with variants expose a `palette` Choice knob (first knob in the
+editor). It indexes both the effect's internal color tables
+(`tuning.choice(Knob::Palette)`) and `config::variant_anchors`, whose
+(primary, secondary) anchors retint the whole UI through the same `retint`
+machinery as the adaptive palette — so a colorway recolors borders, waveform,
+and accents coherently, with a crossfade. Restored at startup (snapped, no
+fade). Current sets:
+
+| theme | colorways |
+|---|---|
+| crt | amber / green / ice |
+| radar | green / amber / arctic |
+| seismograph | classic / blueprint / thermal |
+| tide | ocean / lagoon / abyss |
+| neon sign | magenta / cyan / gold |
+| tape deck | oxide / chrome / gold |
+| fireflies | meadow / ember / ghost |
+| metronome | brass / silver / rosewood |
+
+Also in this release: seismograph ink TINTS text it crosses instead of
+overwriting glyphs (`ink_cell`), and the metronome grew a full-height
+pendulum arm hung from the top of the screen (glyph-tinting like the radar
+beam), with its bob flaring on each strike.

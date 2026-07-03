@@ -13,18 +13,32 @@ use crate::color::{mix, scale};
 use crate::particles::ParticleSim;
 use crate::util::noise;
 
-const TUBE: Color = Color::Rgb(0xff, 0x5a, 0xd8);
+/// Tube gas color per colorway.
+const TUBES: [Color; 3] = [
+    Color::Rgb(0xff, 0x5a, 0xd8), // magenta
+    Color::Rgb(0x3a, 0xe8, 0xff), // cyan
+    Color::Rgb(0xff, 0xc8, 0x3a), // gold
+];
+
+fn tube(t: &Tuning) -> Color {
+    TUBES[t.choice(Knob::Palette).min(2)]
+}
 
 pub struct Neon;
 
 impl ThemeEffect for Neon {
     fn knobs(&self) -> &'static [Knob] {
         &[
+            Knob::Palette,
             Knob::Intensity,
             Knob::Speed,
             Knob::BeatSync,
             Knob::BeatSource,
         ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["magenta", "cyan", "gold"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -56,7 +70,7 @@ impl ThemeEffect for Neon {
         let n = (noise(ctx.frame as u32 / 10, seg * 17) % 100) as f64 / 100.0;
         let buzz = crate::color::quant((ctx.routed_beat() * ctx.tuning.beat_sync) as f64, 4.0);
         let lum = 0.65 + 0.35 * n + buzz * 0.25;
-        let lit = mix(scale(base, lum.min(1.0)), TUBE, buzz * 0.4);
+        let lit = mix(scale(base, lum.min(1.0)), tube(&ctx.tuning), buzz * 0.4);
         if played { lit } else { scale(lit, 0.7) }
     }
 
@@ -109,7 +123,7 @@ impl ThemeEffect for Neon {
                 let glow = ((lum - 0.9) / 0.35).clamp(0.0, 0.6);
                 let base = scale(cell.fg, lum.min(1.0));
                 cell.set_fg(if glow > 0.0 {
-                    mix(base, TUBE, glow)
+                    mix(base, tube(&ctx.tuning), glow)
                 } else {
                     base
                 });

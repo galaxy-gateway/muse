@@ -12,11 +12,38 @@ use super::{FrameCtx, Knob, ThemeEffect, Tuning};
 use crate::color::{mix, scale};
 use crate::particles::ParticleSim;
 
+/// (tick accent, strike flash, trail/label dim) per colorway.
+const COLORWAYS: [(Color, Color, Color); 3] = [
+    (
+        Color::Rgb(0xe8, 0xc8, 0x7a),
+        Color::Rgb(0xff, 0xf2, 0xc8),
+        Color::Rgb(0x6a, 0x5c, 0x40),
+    ), // brass
+    (
+        Color::Rgb(0xd0, 0xd8, 0xe0),
+        Color::Rgb(0xff, 0xff, 0xff),
+        Color::Rgb(0x5a, 0x60, 0x6a),
+    ), // silver
+    (
+        Color::Rgb(0xd8, 0x8a, 0x6a),
+        Color::Rgb(0xff, 0xd8, 0xc0),
+        Color::Rgb(0x6a, 0x44, 0x38),
+    ), // rosewood
+];
+
+fn colorway(t: &Tuning) -> (Color, Color, Color) {
+    COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
+
 pub struct Metronome;
 
 impl ThemeEffect for Metronome {
     fn knobs(&self) -> &'static [Knob] {
-        &[Knob::Intensity, Knob::Speed, Knob::BeatSync]
+        &[Knob::Palette, Knob::Intensity, Knob::Speed, Knob::BeatSync]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["brass", "silver", "rosewood"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -75,11 +102,66 @@ impl ThemeEffect for Metronome {
             None => ctx.beat * ctx.tuning.beat_sync,
         };
 
-        let accent = Color::Rgb(0xe8, 0xc8, 0x7a);
-        let flash = Color::Rgb(0xff, 0xf2, 0xc8);
-        let dim = Color::Rgb(0x6a, 0x5c, 0x40);
+        let (accent, flash, dim) = colorway(&ctx.tuning);
         let intensity = ctx.tuning.intensity as f64;
         let buf = f.buffer_mut();
+
+        // --- The arm: a full-height pendulum hung from the top of the
+        // screen, its bob sweeping just above the transport bar. Drawn by
+        // TINTING the glyphs it crosses (texture dots on blanks) so the file
+        // tree stays readable — one thin moving line, everything else
+        // untouched. The transport tick below is its echo. ---
+        let s = ctx.screen;
+        if s.height > 14 {
+            let px = s.x as f64 + s.width as f64 / 2.0;
+            let py = s.y as f64 + 1.0;
+            let len = ctx.transport_rect.y.saturating_sub(s.y + 3) as f64;
+            let theta = 0.55 * angle.sin(); // radians off vertical
+            let (adx, ady) = (theta.sin() * 2.0, theta.cos()); // cell aspect
+            let steps = (len as u32 * 2).max(8);
+            for i in 4..steps {
+                let t = i as f64 / steps as f64;
+                let x = (px + adx * len * t).round() as i32;
+                let yy = (py + ady * len * t).round() as i32;
+                if x < s.x as i32
+                    || x >= s.right() as i32
+                    || yy < s.y as i32
+                    || yy >= ctx.transport_rect.y as i32
+                    || ctx.in_thumb(x as u16, yy as u16)
+                {
+                    continue;
+                }
+                let cell = &mut buf[(x as u16, yy as u16)];
+                if cell.symbol() == " " {
+                    cell.set_char('·');
+                    cell.set_fg(scale(accent, (0.30 + t * 0.45) * (0.5 + intensity * 0.5)));
+                } else {
+                    let (r, g, b) = crate::color::rgb_of(cell.fg);
+                    let (ar, ag, ab) = crate::color::rgb_of(accent);
+                    let m = (0.30 + t * 0.30) * (0.5 + intensity * 0.5);
+                    cell.set_fg(Color::Rgb(
+                        (r + (ar - r) * m) as u8,
+                        (g + (ag - g) * m) as u8,
+                        (b + (ab - b) * m) as u8,
+                    ));
+                }
+            }
+            // The bob, flaring on the strike; the pivot above it all.
+            let bx = (px + adx * len).round() as i32;
+            let by = (py + ady * len).round() as i32;
+            if bx >= s.x as i32
+                && bx < s.right() as i32
+                && by >= s.y as i32
+                && by < ctx.transport_rect.y as i32
+            {
+                let cell = &mut buf[(bx as u16, by as u16)];
+                cell.set_char(if strike > 0.3 { '◉' } else { '●' });
+                cell.set_fg(mix(accent, flash, strike as f64));
+            }
+            let cell = &mut buf[(px.round() as u16, py as u16)];
+            cell.set_char('┰');
+            cell.set_fg(dim);
+        }
 
         // Motion trail: two ghosts hanging behind the tick's travel direction.
         for (i, k) in [(2i32, 0.25), (1, 0.5)] {

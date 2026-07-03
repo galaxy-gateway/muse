@@ -14,25 +14,39 @@ use crate::color::{quant, scale};
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
-/// Per-channel ink: wet color, dry color, label.
-const CHANNELS: [(Color, Color, &str); 3] = [
+/// Channel labels (fixed) and per-colorway ink sets: three (wet, dry) pairs
+/// plus the paper grid color.
+const LABELS: [&str; 3] = ["bass", "mid", "treble"];
+const COLORWAYS: [([(Color, Color); 3], Color); 3] = [
     (
-        Color::Rgb(0xd8, 0x3a, 0x2a),
-        Color::Rgb(0x8a, 0x2e, 0x24),
-        "bass",
-    ),
+        [
+            (Color::Rgb(0xd8, 0x3a, 0x2a), Color::Rgb(0x8a, 0x2e, 0x24)),
+            (Color::Rgb(0xd8, 0xa0, 0x2a), Color::Rgb(0x8a, 0x6a, 0x24)),
+            (Color::Rgb(0x8a, 0xa0, 0xb8), Color::Rgb(0x5a, 0x6a, 0x7a)),
+        ],
+        Color::Rgb(0x3a, 0x34, 0x2c),
+    ), // classic
     (
-        Color::Rgb(0xd8, 0xa0, 0x2a),
-        Color::Rgb(0x8a, 0x6a, 0x24),
-        "mid",
-    ),
+        [
+            (Color::Rgb(0xe8, 0xf0, 0xff), Color::Rgb(0x9a, 0xa8, 0xc0)),
+            (Color::Rgb(0x5a, 0xc8, 0xff), Color::Rgb(0x3a, 0x80, 0xa8)),
+            (Color::Rgb(0xb0, 0xc8, 0xe0), Color::Rgb(0x6a, 0x80, 0x9a)),
+        ],
+        Color::Rgb(0x2a, 0x3c, 0x55),
+    ), // blueprint
     (
-        Color::Rgb(0x8a, 0xa0, 0xb8),
-        Color::Rgb(0x5a, 0x6a, 0x7a),
-        "treble",
-    ),
+        [
+            (Color::Rgb(0xff, 0x4a, 0x2a), Color::Rgb(0xa0, 0x32, 0x1e)),
+            (Color::Rgb(0xff, 0x8a, 0x2a), Color::Rgb(0xa8, 0x5c, 0x1e)),
+            (Color::Rgb(0xff, 0xd0, 0x4a), Color::Rgb(0xa8, 0x8a, 0x30)),
+        ],
+        Color::Rgb(0x40, 0x30, 0x20),
+    ), // thermal
 ];
-const GRID: Color = Color::Rgb(0x3a, 0x34, 0x2c);
+
+fn colorway(t: &Tuning) -> &'static ([(Color, Color); 3], Color) {
+    &COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
 
 /// Spark seed layout: bits 0..7 deflection (+32), bits 8..9 channel,
 /// bit 10 marks a track-change event stamp.
@@ -60,7 +74,16 @@ pub struct Seismograph;
 
 impl ThemeEffect for Seismograph {
     fn knobs(&self) -> &'static [Knob] {
-        &[Knob::Intensity, Knob::Speed, Knob::Persistence]
+        &[
+            Knob::Palette,
+            Knob::Intensity,
+            Knob::Speed,
+            Knob::Persistence,
+        ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["classic", "blueprint", "thermal"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -169,6 +192,7 @@ impl ThemeEffect for Seismograph {
         }
         let fade_floor = 0.25 + ctx.tuning.persistence as f64 * 0.65;
         let paper = paper_speed(&ctx.tuning) as f64;
+        let (inks, grid) = colorway(&ctx.tuning);
         let buf = f.buffer_mut();
 
         // Time grid scrolling with the paper (whole-cell steps): a dim tick
@@ -182,23 +206,23 @@ impl ThemeEffect for Seismograph {
                     let cell = &mut buf[(x, y)];
                     if cell.symbol() == " " {
                         cell.set_char('┊');
-                        cell.set_fg(scale(GRID, 0.8));
+                        cell.set_fg(scale(*grid, 0.8));
                     }
                 }
             }
         }
 
         // Baselines + channel labels at the left margin.
-        for (ch, &(ink, _, label)) in CHANNELS.iter().enumerate() {
+        for (ch, &(ink, _)) in inks.iter().enumerate() {
             let y = base_y(ctx, ch);
             for x in (area.x + 1)..(area.right() - 1) {
                 let cell = &mut buf[(x, y)];
                 if cell.symbol() == " " {
                     cell.set_char('┄');
-                    cell.set_fg(GRID);
+                    cell.set_fg(*grid);
                 }
             }
-            for (i, c) in label.chars().enumerate() {
+            for (i, c) in LABELS[ch].chars().enumerate() {
                 let x = area.x + 2 + i as u16;
                 let cell = &mut buf[(x, y.saturating_sub(1))];
                 if cell.symbol() == " " {
@@ -215,18 +239,23 @@ impl ThemeEffect for Seismograph {
                 continue;
             }
             if p.seed & EVENT != 0 {
-                // Track-change stamp: dashed vertical through all channels.
+                // Track-change stamp: dashed vertical through all channels —
+                // drawn on blank cells, tinting any text it crosses instead.
                 for y in band_top..=band_bot {
                     if (y - band_top).is_multiple_of(2) {
-                        let cell = &mut buf[(x as u16, y)];
-                        cell.set_char('╎');
-                        cell.set_fg(scale(Color::Rgb(0xe0, 0xd8, 0xc4), 0.5));
+                        ink_cell(
+                            buf,
+                            x as u16,
+                            y,
+                            '╎',
+                            scale(Color::Rgb(0xe0, 0xd8, 0xc4), 0.5),
+                        );
                     }
                 }
                 continue;
             }
             let (defl, ch) = decode(p.seed);
-            let (wet_ink, dry_ink, _) = CHANNELS[ch.min(2)];
+            let (wet_ink, dry_ink) = inks[ch.min(2)];
             let base = base_y(ctx, ch.min(2));
             let age_f = p.age as f64 / p.life.max(1) as f64;
             let wet = p.age < 3;
@@ -235,15 +264,35 @@ impl ThemeEffect for Seismograph {
             let tip = (base as i32 - defl).clamp(area.y as i32 + 1, area.bottom() as i32 - 2);
             let (lo, hi) = (tip.min(base as i32), tip.max(base as i32));
             for y in lo..=hi {
-                let cell = &mut buf[(x as u16, y as u16)];
                 let g = if y == tip {
                     if wet { '●' } else { '•' }
                 } else {
                     '│'
                 };
-                cell.set_char(g);
-                cell.set_fg(col);
+                ink_cell(buf, x as u16, y as u16, g, col);
             }
+        }
+    }
+}
+
+/// Ink one cell: draw the stroke glyph on blank cells (and over our own paper
+/// furniture), but only TINT the foreground of real text — the drum crosses
+/// the file tree, and replacing glyphs there made filenames unreadable.
+fn ink_cell(buf: &mut ratatui::buffer::Buffer, x: u16, y: u16, g: char, col: Color) {
+    let cell = &mut buf[(x, y)];
+    match cell.symbol() {
+        " " | "┄" | "┊" | "·" | "│" | "•" | "●" | "╎" => {
+            cell.set_char(g);
+            cell.set_fg(col);
+        }
+        _ => {
+            let (r, gr, b) = crate::color::rgb_of(cell.fg);
+            let (ir, ig, ib) = crate::color::rgb_of(col);
+            cell.set_fg(Color::Rgb(
+                (r + (ir - r) * 0.6) as u8,
+                (gr + (ig - gr) * 0.6) as u8,
+                (b + (ib - b) * 0.6) as u8,
+            ));
         }
     }
 }

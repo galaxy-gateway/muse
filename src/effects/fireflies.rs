@@ -12,21 +12,45 @@ use crate::color::{mix, scale};
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
-const GLOW: Color = Color::Rgb(0xd8, 0xf0, 0x6a);
-const FLARE: Color = Color::Rgb(0xff, 0xff, 0xc0);
-const EMBER: Color = Color::Rgb(0x8a, 0xa0, 0x3a);
+/// (glow, flare, ember) per colorway.
+const COLORWAYS: [(Color, Color, Color); 3] = [
+    (
+        Color::Rgb(0xd8, 0xf0, 0x6a),
+        Color::Rgb(0xff, 0xff, 0xc0),
+        Color::Rgb(0x8a, 0xa0, 0x3a),
+    ), // meadow
+    (
+        Color::Rgb(0xff, 0xa0, 0x3a),
+        Color::Rgb(0xff, 0xd8, 0xa0),
+        Color::Rgb(0xa8, 0x5a, 0x20),
+    ), // ember
+    (
+        Color::Rgb(0xa8, 0xe8, 0xe8),
+        Color::Rgb(0xf0, 0xff, 0xff),
+        Color::Rgb(0x5a, 0x8a, 0x8a),
+    ), // ghost
+];
+
+fn colorway(t: &Tuning) -> (Color, Color, Color) {
+    COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
 
 pub struct Fireflies;
 
 impl ThemeEffect for Fireflies {
     fn knobs(&self) -> &'static [Knob] {
         &[
+            Knob::Palette,
             Knob::Density,
             Knob::Speed,
             Knob::BeatSync,
             Knob::BeatSource,
             Knob::FollowMouse,
         ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["meadow", "ember", "ghost"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -113,6 +137,7 @@ impl ThemeEffect for Fireflies {
             (ctx.routed_beat() * ctx.tuning.beat_sync).clamp(0.0, 1.0) as f64,
             4.0,
         );
+        let (glow_c, flare_c, ember_c) = colorway(&ctx.tuning);
         let buf = f.buffer_mut();
         for p in &sim.sparks {
             let (x, y) = (p.x.round() as i32, p.y.round() as i32);
@@ -137,11 +162,11 @@ impl ThemeEffect for Fireflies {
             }
             let cell = &mut buf[(x as u16, y as u16)];
             let (ch, col) = if lum > 0.75 {
-                ('✦', mix(GLOW, FLARE, treble))
+                ('✦', mix(glow_c, flare_c, treble))
             } else if lum > 0.4 {
-                ('•', GLOW)
+                ('•', glow_c)
             } else {
-                ('·', EMBER)
+                ('·', ember_c)
             };
             cell.set_char(ch);
             cell.set_fg(scale(col, 0.35 + lum * 0.65));

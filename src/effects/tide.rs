@@ -13,9 +13,37 @@ use crate::color::{mix, scale};
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
-const DEEP: (f64, f64, f64) = (30.0, 90.0, 140.0);
-const SURFACE: Color = Color::Rgb(0x7a, 0xd8, 0xe8);
-const FOAM: Color = Color::Rgb(0xe8, 0xff, 0xff);
+/// (surface chop, foam, deep tint, underwater speck) per colorway.
+struct Water {
+    surface: Color,
+    foam: Color,
+    deep: (f64, f64, f64),
+    speck: Color,
+}
+const COLORWAYS: [Water; 3] = [
+    Water {
+        surface: Color::Rgb(0x7a, 0xd8, 0xe8),
+        foam: Color::Rgb(0xe8, 0xff, 0xff),
+        deep: (30.0, 90.0, 140.0),
+        speck: Color::Rgb(0x3a, 0x74, 0xa0),
+    }, // ocean
+    Water {
+        surface: Color::Rgb(0x6a, 0xe8, 0xb8),
+        foam: Color::Rgb(0xe0, 0xff, 0xf0),
+        deep: (16.0, 96.0, 72.0),
+        speck: Color::Rgb(0x3a, 0xa0, 0x7a),
+    }, // lagoon
+    Water {
+        surface: Color::Rgb(0x8a, 0x7a, 0xe8),
+        foam: Color::Rgb(0xe0, 0xd8, 0xff),
+        deep: (44.0, 32.0, 96.0),
+        speck: Color::Rgb(0x5c, 0x4a, 0xa8),
+    }, // abyss
+];
+
+fn water(t: &Tuning) -> &'static Water {
+    &COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
 
 pub struct Tide;
 
@@ -30,12 +58,17 @@ fn surface(x: u16, frame: u64, swell: f64, intensity: f64) -> f64 {
 impl ThemeEffect for Tide {
     fn knobs(&self) -> &'static [Knob] {
         &[
+            Knob::Palette,
             Knob::Intensity,
             Knob::Density,
             Knob::Wind,
             Knob::BeatSync,
             Knob::BeatSource,
         ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["ocean", "lagoon", "abyss"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -66,7 +99,7 @@ impl ThemeEffect for Tide {
             10.0,
         );
         let bass = crate::color::quant((ctx.routed_beat() * ctx.tuning.beat_sync) as f64, 4.0);
-        let lifted = mix(scale(base, ripple), FOAM, bass * 0.35);
+        let lifted = mix(scale(base, ripple), water(&ctx.tuning).foam, bass * 0.35);
         if played { lifted } else { scale(lifted, 0.75) }
     }
 
@@ -124,6 +157,7 @@ impl ThemeEffect for Tide {
         let swell = bass * 3.0;
         let intensity = ctx.tuning.intensity as f64;
         let floor = ctx.transport_rect.y; // water sits above the transport bar
+        let w = water(&ctx.tuning);
         let buf = f.buffer_mut();
 
         for x in area.x..area.right() {
@@ -143,7 +177,7 @@ impl ThemeEffect for Tide {
                 2 => '∿',
                 _ => '~',
             });
-            cell.set_fg(mix(SURFACE, FOAM, bass * 0.7));
+            cell.set_fg(mix(w.surface, w.foam, bass * 0.7));
             // Below the waterline: tint existing glyphs toward deep blue, and
             // texture blank cells lightly so the body of water reads as water.
             for y in (top + 1)..floor {
@@ -158,14 +192,14 @@ impl ThemeEffect for Tide {
                 if cell.symbol() == " " {
                     if noise(x as u32 * 31, y as u32 * 17).is_multiple_of(11) {
                         cell.set_char('·');
-                        cell.set_fg(Color::Rgb(0x3a, 0x74, 0xa0));
+                        cell.set_fg(w.speck);
                     }
                 } else {
                     let (r, g, b) = crate::color::rgb_of(cell.fg);
                     cell.set_fg(Color::Rgb(
-                        (r + (DEEP.0 - r) * k) as u8,
-                        (g + (DEEP.1 - g) * k) as u8,
-                        (b + (DEEP.2 - b) * k) as u8,
+                        (r + (w.deep.0 - r) * k) as u8,
+                        (g + (w.deep.1 - g) * k) as u8,
+                        (b + (w.deep.2 - b) * k) as u8,
                     ));
                 }
             }
@@ -184,7 +218,7 @@ impl ThemeEffect for Tide {
             let fade = 1.0 - p.age as f64 / p.life.max(1) as f64;
             let cell = &mut buf[(x as u16, y as u16)];
             cell.set_char(if p.age < 3 { '∘' } else { '·' });
-            cell.set_fg(scale(FOAM, 0.4 + fade * 0.6));
+            cell.set_fg(scale(w.foam, 0.4 + fade * 0.6));
         }
     }
 }

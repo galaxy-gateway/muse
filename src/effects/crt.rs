@@ -13,20 +13,33 @@ use crate::color::rgb_of;
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
-/// Phosphor tint the afterglow pulls glyphs toward.
-const PHOSPHOR: (f64, f64, f64) = (255.0, 176.0, 0.0);
+/// (afterglow phosphor tint, wave-tint hot color) per colorway.
+const COLORWAYS: [((f64, f64, f64), Color); 3] = [
+    ((255.0, 176.0, 0.0), Color::Rgb(0xff, 0xd7, 0x66)), // amber
+    ((51.0, 255.0, 102.0), Color::Rgb(0x99, 0xff, 0xbb)), // green
+    ((168.0, 216.0, 255.0), Color::Rgb(0xe0, 0xf0, 0xff)), // ice
+];
+
+fn colorway(t: &Tuning) -> &'static ((f64, f64, f64), Color) {
+    &COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
 
 pub struct Crt;
 
 impl ThemeEffect for Crt {
     fn knobs(&self) -> &'static [Knob] {
         &[
+            Knob::Palette,
             Knob::Intensity,
             Knob::Speed,
             Knob::Persistence,
             Knob::BeatSync,
             Knob::BeatSource,
         ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["amber", "green", "ice"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -63,7 +76,7 @@ impl ThemeEffect for Crt {
         } else {
             0.0
         };
-        let warm = crate::color::mix(base, Color::Rgb(0xff, 0xd7, 0x66), hot * 0.8);
+        let warm = crate::color::mix(base, colorway(&ctx.tuning).1, hot * 0.8);
         if played {
             warm
         } else {
@@ -165,12 +178,13 @@ impl ThemeEffect for Crt {
             }
             let fade = 1.0 - (p.age as f64 / p.life.max(1) as f64);
             let k = fade * 0.55 * (0.4 + intensity * 0.6);
+            let ph = colorway(&ctx.tuning).0;
             let cell = &mut buf[(x as u16, y as u16)];
             let (r, g, b) = rgb_of(cell.fg);
             cell.set_fg(Color::Rgb(
-                (r + (PHOSPHOR.0 - r) * k) as u8,
-                (g + (PHOSPHOR.1 - g) * k) as u8,
-                (b + (PHOSPHOR.2 - b) * k) as u8,
+                (r + (ph.0 - r) * k) as u8,
+                (g + (ph.1 - g) * k) as u8,
+                (b + (ph.2 - b) * k) as u8,
             ));
         }
     }

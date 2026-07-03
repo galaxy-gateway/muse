@@ -14,19 +14,32 @@ use crate::color::scale;
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
-const HISS: Color = Color::Rgb(0x5a, 0x4a, 0x38);
-const SMEAR: Color = Color::Rgb(0xe8, 0xd0, 0xa8);
+/// (hiss speck, rewind smear) per colorway.
+const COLORWAYS: [(Color, Color); 3] = [
+    (Color::Rgb(0x5a, 0x4a, 0x38), Color::Rgb(0xe8, 0xd0, 0xa8)), // oxide
+    (Color::Rgb(0x46, 0x50, 0x5c), Color::Rgb(0xd0, 0xdc, 0xe8)), // chrome
+    (Color::Rgb(0x54, 0x48, 0x22), Color::Rgb(0xff, 0xe0, 0x8a)), // gold
+];
+
+fn colorway(t: &Tuning) -> (Color, Color) {
+    COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
 
 pub struct Tape;
 
 impl ThemeEffect for Tape {
     fn knobs(&self) -> &'static [Knob] {
         &[
+            Knob::Palette,
             Knob::Intensity,
             Knob::Speed,
             Knob::Disruption,
             Knob::BeatSync,
         ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["oxide", "chrome", "gold"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -85,6 +98,7 @@ impl ThemeEffect for Tape {
         let speed = ctx.tuning.speed as f64;
         let disruption = ctx.tuning.disruption as f64;
         let beat = (ctx.beat * ctx.tuning.beat_sync) as f64;
+        let (hiss, smear) = colorway(&ctx.tuning);
         let buf = f.buffer_mut();
 
         // --- Wow & flutter: shift each waveform row horizontally by a slow
@@ -118,7 +132,7 @@ impl ThemeEffect for Tape {
             let cell = &mut buf[(x, y)];
             if cell.symbol() == " " {
                 cell.set_char(if s & 8 == 0 { '·' } else { '.' });
-                cell.set_fg(scale(HISS, 0.5 + (s % 5) as f64 * 0.12));
+                cell.set_fg(scale(hiss, 0.5 + (s % 5) as f64 * 0.12));
             }
         }
 
@@ -135,7 +149,7 @@ impl ThemeEffect for Tape {
             let fade = crate::color::quant(1.0 - p.age as f64 / p.life.max(1) as f64, 8.0);
             let cell = &mut buf[(x as u16, y as u16)];
             cell.set_char(if p.age % 3 == 0 { '╌' } else { '─' });
-            cell.set_fg(scale(SMEAR, 0.35 + fade * 0.65));
+            cell.set_fg(scale(smear, 0.35 + fade * 0.65));
         }
     }
 }

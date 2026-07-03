@@ -14,8 +14,16 @@ use crate::color::{quant, rgb_of, scale};
 use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
-const PHOSPHOR: Color = Color::Rgb(0x39, 0xff, 0x8a);
-const RIM: Color = Color::Rgb(0x1a, 0x66, 0x40);
+/// (beam/contact phosphor, dim rim furniture) per colorway.
+const COLORWAYS: [(Color, Color); 3] = [
+    (Color::Rgb(0x39, 0xff, 0x8a), Color::Rgb(0x1a, 0x66, 0x40)), // green
+    (Color::Rgb(0xff, 0xb0, 0x30), Color::Rgb(0x6e, 0x4a, 0x12)), // amber
+    (Color::Rgb(0x8a, 0xd8, 0xff), Color::Rgb(0x2a, 0x54, 0x6e)), // arctic
+];
+
+fn colorway(t: &Tuning) -> (Color, Color) {
+    COLORWAYS[t.choice(Knob::Palette).min(2)]
+}
 
 /// Screen-filling dial: (center x, center y, x-radius, y-radius). The x radius
 /// runs wider than 2:1 cell aspect would suggest so the beam reaches the
@@ -51,11 +59,16 @@ pub struct Radar;
 impl ThemeEffect for Radar {
     fn knobs(&self) -> &'static [Knob] {
         &[
+            Knob::Palette,
             Knob::Speed,
             Knob::Persistence,
             Knob::Density,
             Knob::BeatSync,
         ]
+    }
+
+    fn palette_names(&self) -> &'static [&'static str] {
+        &["green", "amber", "arctic"]
     }
 
     fn default_tuning(&self) -> Tuning {
@@ -117,6 +130,7 @@ impl ThemeEffect for Radar {
                 && y >= area.y as i32
                 && y < area.bottom() as i32
         };
+        let (phosphor, rim) = colorway(&ctx.tuning);
         let buf = f.buffer_mut();
 
         // Range rings + bearing ticks: static furniture on blank cells only.
@@ -132,7 +146,7 @@ impl ThemeEffect for Radar {
                     let cell = &mut buf[(x as u16, y as u16)];
                     if cell.symbol() == " " {
                         cell.set_char('·');
-                        cell.set_fg(scale(RIM, if ring > 0.9 { 1.0 } else { 0.7 }));
+                        cell.set_fg(scale(rim, if ring > 0.9 { 1.0 } else { 0.7 }));
                     }
                 }
             }
@@ -160,11 +174,11 @@ impl ThemeEffect for Radar {
                 if cell.symbol() == " " {
                     if glow > 0.3 {
                         cell.set_char('·');
-                        cell.set_fg(scale(PHOSPHOR, glow * 0.55));
+                        cell.set_fg(scale(phosphor, glow * 0.55));
                     }
                 } else {
                     let (r, g, b) = rgb_of(cell.fg);
-                    let (pr, pg, pb) = rgb_of(PHOSPHOR);
+                    let (pr, pg, pb) = rgb_of(phosphor);
                     let m = glow * 0.7;
                     cell.set_fg(Color::Rgb(
                         (r + (pr - r) * m) as u8,
@@ -196,7 +210,7 @@ impl ThemeEffect for Radar {
             } else {
                 '○'
             });
-            cell.set_fg(scale(PHOSPHOR, 0.2 + lum * 0.8));
+            cell.set_fg(scale(phosphor, 0.2 + lum * 0.8));
         }
 
         // Antenna.
@@ -204,7 +218,7 @@ impl ThemeEffect for Radar {
         if inside(ax, ay) {
             let cell = &mut buf[(ax as u16, ay as u16)];
             cell.set_char('╋');
-            cell.set_fg(PHOSPHOR);
+            cell.set_fg(phosphor);
         }
     }
 }

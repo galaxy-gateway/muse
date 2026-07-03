@@ -566,6 +566,7 @@ pub struct TuningCfg {
     pub strobe: Option<f32>,
     pub follow_mouse: Option<f32>,
     pub beat_source: Option<f32>,
+    pub palette: Option<f32>,
 }
 
 impl TuningCfg {
@@ -601,6 +602,9 @@ impl TuningCfg {
         if let Some(v) = self.beat_source {
             t.beat_source = v;
         }
+        if let Some(v) = self.palette {
+            t.palette = v;
+        }
     }
 
     /// Snapshot a live `Tuning` for persistence.
@@ -616,6 +620,7 @@ impl TuningCfg {
             strobe: Some(t.strobe),
             follow_mouse: Some(t.follow_mouse),
             beat_source: Some(t.beat_source),
+            palette: Some(t.palette),
         }
     }
 }
@@ -700,3 +705,32 @@ pub const SCOPE_PRESETS: &[ScopePreset] = &[
         auto_gain: false,
     },
 ];
+
+/// An 8-bit RGB anchor pair used to retint the UI for a colorway.
+pub type AnchorPair = ((u8, u8, u8), (u8, u8, u8));
+
+/// UI-palette anchor colors (primary, secondary) for a theme's colorway `k`.
+/// `None` for k = 0 (the theme's own palette) or themes without variants. The
+/// app runs these through the same `retint` used by the adaptive palette, so
+/// a colorway recolors the whole UI coherently, not just the effect.
+pub fn variant_anchors(theme: &str, k: usize) -> Option<AnchorPair> {
+    match (theme, k) {
+        ("crt", 1) => Some(((0x33, 0xff, 0x66), (0x99, 0xff, 0xbb))), // green
+        ("crt", 2) => Some(((0xa8, 0xd8, 0xff), (0xe0, 0xf0, 0xff))), // ice
+        ("radar", 1) => Some(((0xff, 0xb0, 0x30), (0xd8, 0x8a, 0x1a))), // amber
+        ("radar", 2) => Some(((0x8a, 0xd8, 0xff), (0xd0, 0xf0, 0xff))), // arctic
+        ("seismograph", 1) => Some(((0x5a, 0xc8, 0xff), (0xe8, 0xf0, 0xff))), // blueprint
+        ("seismograph", 2) => Some(((0xff, 0x8a, 0x2a), (0xff, 0xd0, 0x4a))), // thermal
+        ("tide", 1) => Some(((0x6a, 0xe8, 0xb8), (0xe0, 0xff, 0xf0))), // lagoon
+        ("tide", 2) => Some(((0x8a, 0x7a, 0xe8), (0xc8, 0xc0, 0xff))), // abyss
+        ("neon sign", 1) => Some(((0x3a, 0xe8, 0xff), (0xff, 0x5a, 0xd8))), // cyan
+        ("neon sign", 2) => Some(((0xff, 0xc8, 0x3a), (0xff, 0x8a, 0x5a))), // gold
+        ("tape deck", 1) => Some(((0xa8, 0xb8, 0xc8), (0xd8, 0xe4, 0xf0))), // chrome
+        ("tape deck", 2) => Some(((0xe8, 0xc0, 0x4a), (0xff, 0xe0, 0x8a))), // gold
+        ("fireflies", 1) => Some(((0xff, 0xa0, 0x3a), (0xff, 0xd8, 0xa0))), // ember
+        ("fireflies", 2) => Some(((0xa8, 0xe8, 0xe8), (0xf0, 0xff, 0xff))), // ghost
+        ("metronome", 1) => Some(((0xd0, 0xd8, 0xe0), (0xf0, 0xf4, 0xff))), // silver
+        ("metronome", 2) => Some(((0xd8, 0x8a, 0x6a), (0xff, 0xd8, 0xc0))), // rosewood
+        _ => None,
+    }
+}

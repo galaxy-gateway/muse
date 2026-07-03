@@ -158,6 +158,17 @@ fn draw_theme_editor(f: &mut Frame, app: &App, area: Rect, knobs: &[crate::effec
                 lines.push(Line::from(Span::styled(txt, Style::default().fg(col))));
             }
             crate::effects::KnobKind::Choice(opts) => {
+                // The palette knob's real colorway names live on the effect.
+                let opts = if *k == crate::effects::Knob::Palette {
+                    let names = THEMES[app.theme_sel].effect.palette_names();
+                    if names.len() == opts.len() {
+                        names
+                    } else {
+                        opts
+                    }
+                } else {
+                    opts
+                };
                 let idx = tuning.choice(*k).min(opts.len() - 1);
                 lines.push(Line::from(vec![
                     Span::styled("  ‹ ", Style::default().fg(t.dim)),

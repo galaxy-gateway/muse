@@ -295,12 +295,17 @@ impl App {
             crate::effects::KnobKind::Range => self.tunings[self.theme_sel].get(k) + delta,
         };
         self.tunings[self.theme_sel].set(k, next);
+        // The palette knob recolors the UI, not just the effect.
+        if k == crate::effects::Knob::Palette {
+            self.refresh_palette();
+        }
         self.persist();
     }
 
     /// Restore the highlighted theme's knobs to the effect's defaults (saved).
     fn reset_tuning(&mut self) {
         self.tunings[self.theme_sel] = THEMES[self.theme_sel].effect.default_tuning();
+        self.refresh_palette();
         self.persist();
     }
 

@@ -81,10 +81,20 @@ pub enum Knob {
     /// Which band drives the theme's beat reactions: all / bass / mid / treble.
     /// Read through `FrameCtx::routed_beat`.
     BeatSource,
+    /// Which of the theme's colorways is active. Themes with variants expose
+    /// their real names via `ThemeEffect::palette_names`; the value indexes
+    /// both the effect's internal color tables and the UI palette anchors in
+    /// `config::variant_anchors`.
+    Palette,
 }
 
 /// Option labels for the `BeatSource` choice knob, in stored-value order.
 pub const BEAT_SOURCES: &[&str] = &["all", "bass", "mid", "treble"];
+
+/// Placeholder slots for the `Palette` choice knob — every theme with
+/// colorways defines exactly three, and the modal swaps in the real names
+/// from `ThemeEffect::palette_names`.
+pub const PALETTE_SLOTS: &[&str] = &["a", "b", "c"];
 
 impl Knob {
     pub fn label(self) -> &'static str {
@@ -99,6 +109,7 @@ impl Knob {
             Knob::Strobe => "strobe",
             Knob::FollowMouse => "follow mouse",
             Knob::BeatSource => "beat source",
+            Knob::Palette => "palette",
         }
     }
 
@@ -106,6 +117,7 @@ impl Knob {
         match self {
             Knob::FollowMouse => KnobKind::Toggle,
             Knob::BeatSource => KnobKind::Choice(BEAT_SOURCES),
+            Knob::Palette => KnobKind::Choice(PALETTE_SLOTS),
             _ => KnobKind::Range,
         }
     }
@@ -126,6 +138,7 @@ pub struct Tuning {
     pub strobe: f32,
     pub follow_mouse: f32,
     pub beat_source: f32,
+    pub palette: f32,
 }
 
 impl Default for Tuning {
@@ -141,6 +154,7 @@ impl Default for Tuning {
             strobe: 0.5,
             follow_mouse: 1.0,
             beat_source: 0.0, // "all"
+            palette: 0.0,     // first colorway
         }
     }
 }
@@ -158,6 +172,7 @@ impl Tuning {
             Knob::Strobe => self.strobe,
             Knob::FollowMouse => self.follow_mouse,
             Knob::BeatSource => self.beat_source,
+            Knob::Palette => self.palette,
         }
     }
 
@@ -189,6 +204,7 @@ impl Tuning {
             Knob::Strobe => self.strobe = v,
             Knob::FollowMouse => self.follow_mouse = v,
             Knob::BeatSource => self.beat_source = v,
+            Knob::Palette => self.palette = v,
         }
     }
 
@@ -317,6 +333,13 @@ pub trait ThemeEffect: Sync {
     /// The engine switched tracks (manual open or gapless advance) — themes
     /// can react once per real audio switch (Tape's rewind smear).
     fn on_track(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
+
+    /// Names of this theme's colorways (shown by the Palette knob), empty if
+    /// the theme has only one. Themes with variants define exactly three and
+    /// index their internal color tables with `tuning.choice(Knob::Palette)`.
+    fn palette_names(&self) -> &'static [&'static str] {
+        &[]
+    }
 
     /// Per-tick continuous spawning (rain, bubbles, scope shoot-offs, ...).
     fn ambient(&self, _sim: &mut ParticleSim, _ctx: &FrameCtx) {}
