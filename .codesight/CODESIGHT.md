@@ -4,7 +4,7 @@
 
 > 0 routes | 0 models | 0 components | 0 lib files | 0 env vars | 0 middleware
 > **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~9,100 tokens. **Saves ~8,500 tokens per conversation.**
-> **Last scanned:** 2026-07-03 16:54 — re-run after significant changes
+> **Last scanned:** 2026-07-16 21:50 — re-run after significant changes
 
 ---
 
@@ -28,6 +28,7 @@
 - `src/app/queue.rs` — imported by **1** files
 - `src/app/shuffle.rs` — imported by **1** files
 - `src/effects/aurora.rs` — imported by **1** files
+- `src/effects/bamboo_moon.rs` — imported by **1** files
 - `src/effects/basic.rs` — imported by **1** files
 - `src/effects/blackhole.rs` — imported by **1** files
 - `src/effects/bubbles.rs` — imported by **1** files
@@ -39,7 +40,6 @@
 - `src/effects/fireflies.rs` — imported by **1** files
 - `src/effects/fireplace.rs` — imported by **1** files
 - `src/effects/flag.rs` — imported by **1** files
-- `src/effects/flame.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
@@ -51,8 +51,8 @@
 - `src/app/queue.rs` ← `src/app/mod.rs`
 - `src/app/shuffle.rs` ← `src/app/mod.rs`
 - `src/effects/aurora.rs` ← `src/effects/mod.rs`
+- `src/effects/bamboo_moon.rs` ← `src/effects/mod.rs`
 - `src/effects/basic.rs` ← `src/effects/mod.rs`
-- `src/effects/blackhole.rs` ← `src/effects/mod.rs`
 
 ---
 

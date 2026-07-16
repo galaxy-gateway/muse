@@ -14,6 +14,7 @@ use crate::particles::{ParticleSim, Spark};
 use crate::util::noise;
 
 mod aurora;
+mod bamboo_moon;
 mod basic;
 mod blackhole;
 mod bubbles;
@@ -78,6 +79,12 @@ pub enum Knob {
     Strobe,
     /// Toggle: particles chase the mouse pointer (sakura).
     FollowMouse,
+    /// Toggle: the moon's halo tints the sky around it (bamboo moon).
+    Glow,
+    /// Toggle: stars twinkle rather than sitting still (bamboo moon).
+    Shimmer,
+    /// Toggle: moonlight travels along the waveform (bamboo moon).
+    Glint,
     /// Which band drives the theme's beat reactions: all / bass / mid / treble.
     /// Read through `FrameCtx::routed_beat`.
     BeatSource,
@@ -108,6 +115,9 @@ impl Knob {
             Knob::Disruption => "disruption",
             Knob::Strobe => "strobe",
             Knob::FollowMouse => "follow mouse",
+            Knob::Glow => "moon glow",
+            Knob::Shimmer => "star shimmer",
+            Knob::Glint => "water glint",
             Knob::BeatSource => "beat source",
             Knob::Palette => "palette",
         }
@@ -115,7 +125,7 @@ impl Knob {
 
     pub fn kind(self) -> KnobKind {
         match self {
-            Knob::FollowMouse => KnobKind::Toggle,
+            Knob::FollowMouse | Knob::Glow | Knob::Shimmer | Knob::Glint => KnobKind::Toggle,
             Knob::BeatSource => KnobKind::Choice(BEAT_SOURCES),
             Knob::Palette => KnobKind::Choice(PALETTE_SLOTS),
             _ => KnobKind::Range,
@@ -137,6 +147,9 @@ pub struct Tuning {
     pub disruption: f32,
     pub strobe: f32,
     pub follow_mouse: f32,
+    pub glow: f32,
+    pub shimmer: f32,
+    pub glint: f32,
     pub beat_source: f32,
     pub palette: f32,
 }
@@ -153,6 +166,9 @@ impl Default for Tuning {
             disruption: 0.5,
             strobe: 0.5,
             follow_mouse: 1.0,
+            glow: 1.0,
+            shimmer: 1.0,
+            glint: 1.0,
             beat_source: 0.0, // "all"
             palette: 0.0,     // first colorway
         }
@@ -171,6 +187,9 @@ impl Tuning {
             Knob::Disruption => self.disruption,
             Knob::Strobe => self.strobe,
             Knob::FollowMouse => self.follow_mouse,
+            Knob::Glow => self.glow,
+            Knob::Shimmer => self.shimmer,
+            Knob::Glint => self.glint,
             Knob::BeatSource => self.beat_source,
             Knob::Palette => self.palette,
         }
@@ -203,6 +222,9 @@ impl Tuning {
             Knob::Disruption => self.disruption = v,
             Knob::Strobe => self.strobe = v,
             Knob::FollowMouse => self.follow_mouse = v,
+            Knob::Glow => self.glow = v,
+            Knob::Shimmer => self.shimmer = v,
+            Knob::Glint => self.glint = v,
             Knob::BeatSource => self.beat_source = v,
             Knob::Palette => self.palette = v,
         }
@@ -473,3 +495,4 @@ pub static TIDE: tide::Tide = tide::Tide;
 pub static FIREFLIES: fireflies::Fireflies = fireflies::Fireflies;
 pub static RADAR: radar::Radar = radar::Radar;
 pub static NEON: neon::Neon = neon::Neon;
+pub static BAMBOO_MOON: bamboo_moon::BambooMoon = bamboo_moon::BambooMoon;

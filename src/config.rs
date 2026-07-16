@@ -474,6 +474,19 @@ pub const THEMES: &[Theme] = &[
         bg_sel: rgb(0x1c, 0x08, 0x18),
         effect: &crate::effects::NEON,
     },
+    Theme {
+        name: "bamboo moon",
+        accent: rgb(0xa1, 0xcd, 0xd8),
+        accent2: rgb(0x7a, 0xa4, 0xa1),
+        dir: rgb(0x5a, 0x93, 0xaa),
+        media: rgb(0xcb, 0xd9, 0xd8),
+        dim: rgb(0x6d, 0x7f, 0x8b),
+        scope: rgb(0x7a, 0xa4, 0xa1),
+        wave: rgb(0x58, 0x7b, 0x7b),
+        playing: rgb(0xfd, 0xa4, 0x7f),
+        bg_sel: rgb(0x29, 0x3e, 0x40),
+        effect: &crate::effects::BAMBOO_MOON,
+    },
 ];
 
 impl Default for Theme {
@@ -595,6 +608,9 @@ pub struct TuningCfg {
     pub disruption: Option<f32>,
     pub strobe: Option<f32>,
     pub follow_mouse: Option<f32>,
+    pub glow: Option<f32>,
+    pub shimmer: Option<f32>,
+    pub glint: Option<f32>,
     pub beat_source: Option<f32>,
     pub palette: Option<f32>,
 }
@@ -629,6 +645,15 @@ impl TuningCfg {
         if let Some(v) = self.follow_mouse {
             t.follow_mouse = v;
         }
+        if let Some(v) = self.glow {
+            t.glow = v;
+        }
+        if let Some(v) = self.shimmer {
+            t.shimmer = v;
+        }
+        if let Some(v) = self.glint {
+            t.glint = v;
+        }
         if let Some(v) = self.beat_source {
             t.beat_source = v;
         }
@@ -649,6 +674,9 @@ impl TuningCfg {
             disruption: Some(t.disruption),
             strobe: Some(t.strobe),
             follow_mouse: Some(t.follow_mouse),
+            glow: Some(t.glow),
+            shimmer: Some(t.shimmer),
+            glint: Some(t.glint),
             beat_source: Some(t.beat_source),
             palette: Some(t.palette),
         }
@@ -1035,6 +1063,15 @@ pub fn colorways(theme: &str) -> Option<&'static Colorways> {
             (0xe0, 0xff, 0xf0),
             (0x8a, 0x7a, 0xe8),
             (0xc8, 0xc0, 0xff)
+        ),
+        "bamboo moon" => cw!(
+            "moonlit",
+            "lantern",
+            "plum blossom",
+            (0xfd, 0xa4, 0x7f),
+            (0xff, 0x83, 0x49),
+            (0xad, 0x5c, 0x7c),
+            (0xcb, 0x79, 0x85)
         ),
         "neon sign" => cw!(
             "magenta",

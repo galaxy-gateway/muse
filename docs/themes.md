@@ -126,6 +126,7 @@ fade). Current sets:
 | tape deck | oxide / chrome / gold |
 | fireflies | meadow / ember / ghost |
 | metronome | brass / silver / rosewood |
+| bamboo moon | moonlit / lantern / plum blossom |
 
 As of v0.56.0 EVERY theme has a colorway set (the originals get UI-anchor
 variants — the overlay keeps its identity colors). The registry is
@@ -150,3 +151,50 @@ single-slot worker (`audio::analyze_track`) only while such a view is active.
 The beat map logs live onsets against the playhead as you listen; lyrics load
 from `.lrc` sidecars or embedded tags, sync-highlighted when stamped. All
 time-axis views keep click-to-seek and the playhead column.
+
+## Bamboo moon, and drawing scenery behind the UI (v0.65.0)
+
+A terafox-palette night forest (`src/effects/bamboo_moon.rs`): a crescent in
+the upper right, stars in the open sky, mist drifting across the lower third,
+spirit motes wandering (one in twelve warm amber, the panda's satchel), and
+moonlight travelling the waveform via `wave_tint`.
+
+**Layer toggles.** The magic layers switch independently, reusing the knob
+machinery rather than a parallel system. Layers with a natural magnitude ride
+existing Range knobs where 0 = off (motes on `Density`, mist on `Wind`); the
+binary ones got three new generic `Toggle` knobs — `Knob::Glow` / `Shimmer` /
+`Glint`. `TuningCfg`'s fields are all `Option<f32>`, so old configs still
+deserialize and the knob editor handles `KnobKind::Toggle` generically: no UI
+changes were needed. **Keep new Toggle knobs out of `App::scaled_tuning`'s
+list** — it scales Range knobs by the master effect level, and a toggle in
+there would let `[` silently switch layers off.
+
+**Scenery is a background object.** The moon was first drawn as a foreground
+tint and it did not read: panels cover nearly every cell, so the crescent
+survived only as a handful of dots in the gaps, and where it crossed the
+waveform it was three cells of brightened braille lost inside its own glow.
+Painting it into the cell *background* instead (terafox's own bg ramp: bg4
+disc, bg3 limb, a 3-step halo down to bg1) makes it read as one shape through
+the UI and it can never touch a glyph. Guard with `cell.bg == Color::Reset` so
+the selection highlight still wins. Constant per-cell factors, no time term —
+so the diff rewrites nothing.
+
+**Two rules for anything that draws over the UI:**
+
+1. *Tint text, never overwrite it* (seismograph's `ink_cell` lesson). Motes
+   calling `set_char` unconditionally turned `4.0 MB` into `4.ˑ MB` and ate
+   letters out of filenames. Draw the glyph only on blank cells; elsewhere
+   blend the existing fg.
+2. *A blank cell is not automatically sky.* The lone space between two words
+   is a gap in the UI — dropping a star into one renders
+   `a walk in a park at✦night.mp3`. `open_sky` requires the cell and both
+   horizontal neighbours to be blank.
+
+Glyphs are limited to `·`, `•`, `✦`: `ˑ` (U+02D1) reads as tofu in Menlo and
+other common terminal fonts.
+
+`bamboo_moon.rs` carries unit tests over a `TestBackend`, including
+`frames_within_a_clock_step_are_identical` — the flicker rule as an assertion
+(two frames that share `frame/6` and `frame/8` must produce byte-identical
+cells). `cargo test print_sky -- --ignored --nocapture` prints the crescent as
+ASCII for eyeballing.
