@@ -169,15 +169,20 @@ changes were needed. **Keep new Toggle knobs out of `App::scaled_tuning`'s
 list** — it scales Range knobs by the master effect level, and a toggle in
 there would let `[` silently switch layers off.
 
-**Scenery is a background object.** The moon was first drawn as a foreground
-tint and it did not read: panels cover nearly every cell, so the crescent
-survived only as a handful of dots in the gaps, and where it crossed the
-waveform it was three cells of brightened braille lost inside its own glow.
-Painting it into the cell *background* instead (terafox's own bg ramp: bg4
-disc, bg3 limb, a 3-step halo down to bg1) makes it read as one shape through
-the UI and it can never touch a glyph. Guard with `cell.bg == Color::Reset` so
-the selection highlight still wins. Constant per-cell factors, no time term —
-so the diff rewrites nothing.
+**The moon is an overlay, not a backdrop.** It shows as light on what is
+already on screen: a drawn crescent where it crosses open sky, and a lift of
+the existing glyphs everywhere else, with a distance-falloff glow around it.
+The effect is moonlight through the canopy — present in the gaps and on the
+panel text, never a shape sitting behind the UI.
+
+An earlier cut painted the crescent into the cell *background* (a terafox bg
+ramp, guarded on `cell.bg == Color::Reset`). That does read as a single solid
+shape through the panels, and it is recorded here because it is the obvious
+thing to reach for — but it was rejected: it turns a chunk of the UI into a
+lit patch, and it assumes the terminal's own background is dark. The overlay
+is the quieter, more portable read, and it is the one the theme ships with.
+Either way the factors are constant per cell with no time term, so the diff
+rewrites nothing.
 
 **Two rules for anything that draws over the UI:**
 

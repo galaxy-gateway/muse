@@ -55,17 +55,6 @@ fn colorway(t: &Tuning) -> (Color, Color, Color, Color, Color) {
 /// needs its horizontal distances halved.
 const ASPECT: f64 = 2.0;
 
-/// The night sky, as cell backgrounds: terafox's own bg ramp. The moon's lit
-/// disc and its thinner limb, then two steps of halo falling off into the
-/// default terminal background.
-const DISC: Color = Color::Rgb(0x2d, 0x4f, 0x56); // bg4
-const LIMB: Color = Color::Rgb(0x25, 0x41, 0x47); // bg3
-const HALO: [Color; 3] = [
-    Color::Rgb(0x21, 0x3a, 0x3f), // bg2..bg3
-    Color::Rgb(0x1d, 0x33, 0x37), // bg2
-    Color::Rgb(0x15, 0x25, 0x28), // bg1 — meets the terminal's own dark
-];
-
 /// Moon geometry for this screen: (centre x, centre y, vertical radius), or
 /// `None` when the screen is too small to hang a moon in.
 fn moon_geom(ctx: &FrameCtx) -> Option<(f64, f64, f64)> {
@@ -298,20 +287,18 @@ impl ThemeEffect for BambooMoon {
                     } else {
                         ('·', 0.6)
                     };
-                    // The moon is a BACKGROUND object. Painting it into the
-                    // cell bg is what makes it read as one shape through the
-                    // panels: as a foreground tint it was 3 cells of brightened
-                    // braille lost inside its own glow. Only untouched bg is
-                    // painted, so the selection highlight still wins.
+                    // The moon is an overlay, not a painted backdrop: it shows
+                    // as light on what is already there. On open sky that is a
+                    // drawn crescent; over the panels it lifts the glyphs it
+                    // crosses, so the moon reads as moonlight through the
+                    // canopy rather than a lit shape behind the UI.
                     let sky = open_sky(buf, area, x, y);
                     let cell = &mut buf[(x, y)];
-                    if cell.bg == Color::Reset {
-                        cell.set_bg(if thick > 1.0 { DISC } else { LIMB });
-                    }
-                    // A little sparkle where the crescent crosses open sky.
                     if sky {
                         cell.set_char(ch);
                         cell.set_fg(scale(moon_c, lum));
+                    } else if cell.symbol() != " " {
+                        tint_fg(cell, moon_c, lum * 0.7);
                     }
                 }
             }
@@ -340,19 +327,15 @@ impl ThemeEffect for BambooMoon {
                         continue;
                     }
                     let fall = 1.0 - (d - rv) / (reach - rv);
+                    let m = quant(fall * fall * 0.45, 8.0);
+                    if m < 0.06 {
+                        continue;
+                    }
                     let cell = &mut buf[(x, y)];
-                    // Halo: two steps of sky background around the moon, so the
-                    // crescent sits in a pool of light rather than on the bare
-                    // terminal. Stepped by distance, so the RGB is fixed.
-                    if cell.bg == Color::Reset {
-                        let step = ((1.0 - fall) * HALO.len() as f64) as usize;
-                        cell.set_bg(HALO[step.min(HALO.len() - 1)]);
+                    if cell.symbol() == " " {
+                        continue; // glow lights what is there; it adds nothing
                     }
-                    // Moonlight also warms the glyphs it falls on.
-                    let m = quant(fall * fall * 0.35, 8.0);
-                    if m >= 0.06 && cell.symbol() != " " {
-                        tint_fg(cell, moon_c, m);
-                    }
+                    tint_fg(cell, moon_c, m);
                 }
             }
         }
