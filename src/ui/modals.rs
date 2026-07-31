@@ -348,18 +348,16 @@ pub(super) fn draw_help(f: &mut Frame, app: &mut App) {
         ),
     ];
 
-    let mut lines: Vec<Line> = vec![
-        Line::from(vec![
-            Span::styled(
-                format!("muse v{}", env!("CARGO_PKG_VERSION")),
-                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  ·  theme: {}", t.name),
-                Style::default().fg(t.dim),
-            ),
-        ]),
-    ];
+    let mut lines: Vec<Line> = vec![Line::from(vec![
+        Span::styled(
+            format!("muse v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  ·  theme: {}", t.name),
+            Style::default().fg(t.dim),
+        ),
+    ])];
     for (title, rows) in SECTIONS {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -403,16 +401,14 @@ pub(super) fn draw_help(f: &mut Frame, app: &mut App) {
     } else {
         "q / esc to close"
     };
-    let p = Paragraph::new(lines)
-        .scroll((app.help_scroll, 0))
-        .block(
-            panel_hint(
-                title.as_str(),
-                border(&t, app.frame, t.accent2, 0.84, app.beat_pulse()),
-                hint,
-                t.dim,
-            )
-            .padding(Padding::uniform(1)),
-        );
+    let p = Paragraph::new(lines).scroll((app.help_scroll, 0)).block(
+        panel_hint(
+            title.as_str(),
+            border(&t, app.frame, t.accent2, 0.84, app.beat_pulse()),
+            hint,
+            t.dim,
+        )
+        .padding(Padding::uniform(1)),
+    );
     f.render_widget(p, area);
 }

@@ -114,7 +114,7 @@ impl ThemeEffect for Glitch {
             let col = if beat > 0.7 { CYAN } else { COLORS[3] };
             for i in 0..area.width {
                 let cell = &mut buf[(area.x + i, y)];
-                if noise(seed + i as u32, y as u32) % 3 != 0 {
+                if !noise(seed + i as u32, y as u32).is_multiple_of(3) {
                     cell.set_char('─');
                 }
                 cell.set_fg(col);

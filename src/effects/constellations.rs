@@ -43,7 +43,7 @@ impl ThemeEffect for Constellations {
         // stays calm instead of swarming.
         let beat = ctx.beat * ctx.tuning.beat_sync;
         let frame = ctx.frame as u32;
-        if beat > 0.55 && frame % 12 == 0 {
+        if beat > 0.55 && frame.is_multiple_of(12) {
             let s = ctx.screen;
             let w = (s.width as u32).max(1);
             let seed = noise(frame, 0x5407);

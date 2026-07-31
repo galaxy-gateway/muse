@@ -398,7 +398,9 @@ impl App {
                 .wave_view
                 .as_deref()
                 .and_then(|n| {
-                    crate::config::WAVE_VIEWS.iter().position(|(_, name)| *name == n)
+                    crate::config::WAVE_VIEWS
+                        .iter()
+                        .position(|(_, name)| *name == n)
                 })
                 .unwrap_or(0),
             wave_art: HashMap::new(),

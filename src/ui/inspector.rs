@@ -307,7 +307,7 @@ fn draw_spectrogram(f: &mut Frame, app: &App, area: Rect) {
                 width: inner.width.saturating_sub(1),
                 height: 1,
             },
-            );
+        );
         return;
     };
     let n = a.bands.len().max(1);
@@ -440,8 +440,7 @@ fn draw_bands(f: &mut Frame, app: &App, area: Rect) {
                     1 => a.bands[bi].1,
                     _ => a.bands[bi].2,
                 } as f64;
-                let is_played =
-                    progress >= 0.0 && (cx as f64 / inner.width as f64) <= progress;
+                let is_played = progress >= 0.0 && (cx as f64 / inner.width as f64) <= progress;
                 let col = if is_played {
                     col
                 } else {
@@ -550,10 +549,7 @@ fn draw_bitrate(f: &mut Frame, app: &App, area: Rect) {
 fn draw_dynamics(f: &mut Frame, app: &App, area: Rect) {
     with_analysis(f, app, area, "dynamics", |f, app, inner, a, progress| {
         let t = &app.theme;
-        let peaks = app
-            .now_playing
-            .as_ref()
-            .and_then(|p| app.wave_cache.get(p));
+        let peaks = app.now_playing.as_ref().and_then(|p| app.wave_cache.get(p));
         let n = a.rms.len().max(1);
         let mid = inner.y as f64 + inner.height as f64 / 2.0;
         let half = inner.height as f64 / 2.0;
@@ -598,10 +594,7 @@ fn draw_dynamics(f: &mut Frame, app: &App, area: Rect) {
 /// three lanes (bass at the bottom), building up radar-style as you listen.
 fn draw_beat_map(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
-    let log = app
-        .now_playing
-        .as_ref()
-        .and_then(|p| app.beat_log.get(p));
+    let log = app.now_playing.as_ref().and_then(|p| app.beat_log.get(p));
     let count = log.map(|l| l.len()).unwrap_or(0);
     let title = format!("beat map · {count} hits");
     let block = panel_hint(
@@ -834,18 +827,12 @@ fn draw_art_card(f: &mut Frame, app: &App, area: Rect) {
     {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled(
-                "████ ",
-                Style::default().fg(Color::Rgb(p.0, p.1, p.2)),
-            ),
+            Span::styled("████ ", Style::default().fg(Color::Rgb(p.0, p.1, p.2))),
             Span::styled(
                 format!("#{:02x}{:02x}{:02x}  ", p.0, p.1, p.2),
                 Style::default().fg(t.dim),
             ),
-            Span::styled(
-                "████ ",
-                Style::default().fg(Color::Rgb(s.0, s.1, s.2)),
-            ),
+            Span::styled("████ ", Style::default().fg(Color::Rgb(s.0, s.1, s.2))),
             Span::styled(
                 format!("#{:02x}{:02x}{:02x}", s.0, s.1, s.2),
                 Style::default().fg(t.dim),
@@ -912,10 +899,7 @@ fn draw_lyrics(f: &mut Frame, app: &App, area: Rect) {
     match lyr.as_ref() {
         crate::media::Lyrics::Synced(rows) => {
             // Current = last stamped line at or before the playhead.
-            let cur = rows
-                .iter()
-                .rposition(|(ts, _)| *ts <= pos)
-                .unwrap_or(0);
+            let cur = rows.iter().rposition(|(ts, _)| *ts <= pos).unwrap_or(0);
             // Center the current line in the window.
             let start = cur.saturating_sub(h / 2);
             for (i, (_, text)) in rows.iter().enumerate().skip(start).take(h) {
@@ -1254,14 +1238,14 @@ fn draw_spectrum(f: &mut Frame, app: &App, area: Rect) {
 
         for cell_y in 0..inner.height as usize {
             let mut mask = 0u8;
-            for row in 0..4 {
+            for (row, (&left_dot, &right_dot)) in DOTS[0].iter().zip(&DOTS[1]).enumerate() {
                 let sub_y_from_top = cell_y * 4 + row;
                 let sub_y_from_bottom = sub_rows - 1 - sub_y_from_top;
                 if sub_y_from_bottom < left_h {
-                    mask |= DOTS[0][row];
+                    mask |= left_dot;
                 }
                 if sub_y_from_bottom < right_h {
-                    mask |= DOTS[1][row];
+                    mask |= right_dot;
                 }
             }
 

@@ -78,7 +78,11 @@ impl ThemeEffect for Thunderstorm {
             let cell = &mut buf[(area.x + x as u16, area.y + y as u16)];
             if cell.symbol() == " " {
                 cell.set_char('╱');
-                cell.set_fg(if seed % 4 == 0 { RAIN } else { RAIN_DIM });
+                cell.set_fg(if seed.is_multiple_of(4) {
+                    RAIN
+                } else {
+                    RAIN_DIM
+                });
             }
         }
 

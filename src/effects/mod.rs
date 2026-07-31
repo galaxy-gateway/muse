@@ -431,7 +431,7 @@ pub(crate) fn nav_sparks(sim: &mut ParticleSim, ctx: &FrameCtx, dir: f32) {
 /// Shoot particles off the oscilloscope when it peaks loud. Shared by the Flame
 /// and Electric themes; called each ambient tick (self-gates on frame + peak).
 pub(crate) fn scope_sparks(sim: &mut ParticleSim, ctx: &FrameCtx) {
-    if ctx.frame % 2 != 0 {
+    if !ctx.frame.is_multiple_of(2) {
         return;
     }
     let r = ctx.scope_rect;

@@ -78,7 +78,7 @@ impl ThemeEffect for Electric {
                         d if d > 0 => '╱',
                         _ => '│',
                     };
-                    let col = if n % 4 == 0 {
+                    let col = if n.is_multiple_of(4) {
                         Color::Rgb(0xff, 0xff, 0xff)
                     } else {
                         Color::Rgb(0x9d, 0xf0, 0xff)

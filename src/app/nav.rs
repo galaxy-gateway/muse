@@ -75,12 +75,11 @@ impl App {
         self.tree.nodes[id].expanded = true;
         self.refilter_keep();
         // Descend: move the cursor onto the dir's first visible child, if any.
-        if let Some(pos) = self.tree.visible.iter().position(|&v| v == id) {
-            if let Some(&next) = self.tree.visible.get(pos + 1) {
-                if self.tree.node(next).parent == Some(id) {
-                    self.select(pos + 1);
-                }
-            }
+        if let Some(pos) = self.tree.visible.iter().position(|&v| v == id)
+            && let Some(&next) = self.tree.visible.get(pos + 1)
+            && self.tree.node(next).parent == Some(id)
+        {
+            self.select(pos + 1);
         }
     }
 
@@ -96,12 +95,11 @@ impl App {
                 self.tree.release_subtree(id);
             }
             self.refilter_keep();
-        } else if let Some(parent) = node.parent {
-            if parent != self.tree.root {
-                if let Some(pos) = self.tree.visible.iter().position(|&v| v == parent) {
-                    self.select(pos);
-                }
-            }
+        } else if let Some(parent) = node.parent
+            && parent != self.tree.root
+            && let Some(pos) = self.tree.visible.iter().position(|&v| v == parent)
+        {
+            self.select(pos);
         }
     }
 
@@ -155,10 +153,10 @@ impl App {
     fn refilter_keep(&mut self) {
         let keep = self.cursor();
         self.tree.rebuild_visible();
-        if let Some(k) = keep {
-            if let Some(pos) = self.tree.visible.iter().position(|&v| v == k) {
-                self.list_state.select(Some(pos));
-            }
+        if let Some(k) = keep
+            && let Some(pos) = self.tree.visible.iter().position(|&v| v == k)
+        {
+            self.list_state.select(Some(pos));
         }
         self.on_selection_changed();
     }

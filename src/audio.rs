@@ -1819,7 +1819,11 @@ pub fn analyze_track(path: &Path, n_bins: usize) -> Result<TrackAnalysis> {
         pos += p.frames;
     }
     let rms_of = |e: f64, n: u64| -> f32 {
-        if n == 0 { 0.0 } else { (e / n as f64).sqrt() as f32 }
+        if n == 0 {
+            0.0
+        } else {
+            (e / n as f64).sqrt() as f32
+        }
     };
     let mut bands: Vec<(f32, f32, f32)> = acc
         .iter()

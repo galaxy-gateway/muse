@@ -75,22 +75,23 @@ impl ThemeEffect for Flame {
 
         // Burning playhead — a small flame cluster pinned to the play column that
         // oscillates up and down the seek line as the song plays.
-        if let Some(frac) = ctx.play_frac {
-            if wr.width > 2 && wr.height > 3 {
-                let cx = wr.x + 1 + (frac * (wr.width - 2) as f64) as u16;
-                let top = (wr.y + 1) as f64;
-                let bottom = (wr.y + wr.height - 2) as f64;
-                let mid = (top + bottom) / 2.0;
-                let amp = (bottom - top) / 2.0;
-                let yc = mid + (fphase * 0.14).sin() * amp;
-                for dy in -2i32..=2 {
-                    let y = (yc.round() as i32 + dy).clamp(top as i32, bottom as i32) as u16;
-                    let n = noise(frame + dy as u32 * 17, cx as u32);
-                    let (ch, col) = flame_glyph(dy.unsigned_abs() as f64 / 2.0, n);
-                    let cell = &mut buf[(cx, y)];
-                    cell.set_char(ch);
-                    cell.set_fg(col);
-                }
+        if let Some(frac) = ctx.play_frac
+            && wr.width > 2
+            && wr.height > 3
+        {
+            let cx = wr.x + 1 + (frac * (wr.width - 2) as f64) as u16;
+            let top = (wr.y + 1) as f64;
+            let bottom = (wr.y + wr.height - 2) as f64;
+            let mid = (top + bottom) / 2.0;
+            let amp = (bottom - top) / 2.0;
+            let yc = mid + (fphase * 0.14).sin() * amp;
+            for dy in -2i32..=2 {
+                let y = (yc.round() as i32 + dy).clamp(top as i32, bottom as i32) as u16;
+                let n = noise(frame + dy as u32 * 17, cx as u32);
+                let (ch, col) = flame_glyph(dy.unsigned_abs() as f64 / 2.0, n);
+                let cell = &mut buf[(cx, y)];
+                cell.set_char(ch);
+                cell.set_fg(col);
             }
         }
 

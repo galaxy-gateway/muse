@@ -79,7 +79,7 @@ impl ThemeEffect for Fireplace {
         for x in area.x..area.right() {
             let n = noise(frame / 2 + x as u32, 0xBED) % 100;
             let glow = (n as f64 / 100.0 + beat as f64 * 0.5).min(1.0);
-            let ch = if n % 3 == 0 { '▓' } else { '▒' };
+            let ch = if n.is_multiple_of(3) { '▓' } else { '▒' };
             let col = scale(
                 if glow > 0.6 { EMBER_HOT } else { EMBER_MID },
                 0.5 + glow * 0.5,

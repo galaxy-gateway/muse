@@ -140,10 +140,10 @@ impl TreeModel {
             for e in rd.flatten() {
                 let p = e.path();
                 let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                    if name.starts_with('.') {
-                        continue; // skip dotfiles
-                    }
+                if let Some(name) = p.file_name().and_then(|s| s.to_str())
+                    && name.starts_with('.')
+                {
+                    continue; // skip dotfiles
                 }
                 // keep dirs, supported media, playlist (.m3u) files, and archives
                 if is_dir || reg.is_visible(&p) || crate::archive::is_archive(&p) {
@@ -330,10 +330,10 @@ impl TreeModel {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 let p = e.path();
-                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                    if name.starts_with('.') {
-                        continue;
-                    }
+                if let Some(name) = p.file_name().and_then(|s| s.to_str())
+                    && name.starts_with('.')
+                {
+                    continue;
                 }
                 let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 if is_dir {
@@ -374,11 +374,12 @@ impl TreeModel {
             return;
         }
         out.push(id);
-        if node.is_dir && node.expanded {
-            if let Some(children) = &node.children {
-                for &c in children {
-                    self.push_visible(c, out);
-                }
+        if node.is_dir
+            && node.expanded
+            && let Some(children) = &node.children
+        {
+            for &c in children {
+                self.push_visible(c, out);
             }
         }
     }

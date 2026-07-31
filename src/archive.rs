@@ -199,13 +199,13 @@ fn zip_index(archive: &Path) -> Option<Vec<ArchiveEntry>> {
     let mut zip = zip::ZipArchive::new(file).ok()?;
     let mut out = Vec::new();
     for i in 0..zip.len() {
-        if let Ok(e) = zip.by_index(i) {
-            if e.is_file() {
-                out.push(ArchiveEntry {
-                    inner: norm_inner(e.name()),
-                    size: e.size(),
-                });
-            }
+        if let Ok(e) = zip.by_index(i)
+            && e.is_file()
+        {
+            out.push(ArchiveEntry {
+                inner: norm_inner(e.name()),
+                size: e.size(),
+            });
         }
     }
     Some(out)
@@ -216,13 +216,13 @@ fn tar_index(archive: &Path, kind: Kind) -> Option<Vec<ArchiveEntry>> {
     let mut out = Vec::new();
     for entry in tar.entries().ok()? {
         let Ok(entry) = entry else { continue };
-        if entry.header().entry_type().is_file() {
-            if let Ok(p) = entry.path() {
-                out.push(ArchiveEntry {
-                    inner: norm_inner(&p.to_string_lossy()),
-                    size: entry.header().size().unwrap_or(0),
-                });
-            }
+        if entry.header().entry_type().is_file()
+            && let Ok(p) = entry.path()
+        {
+            out.push(ArchiveEntry {
+                inner: norm_inner(&p.to_string_lossy()),
+                size: entry.header().size().unwrap_or(0),
+            });
         }
     }
     Some(out)
