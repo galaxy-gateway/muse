@@ -94,3 +94,7 @@ src/
 
 P2 move + undo · P3 auto-sort (dry-run) + tag write · P4 A/B compare ·
 P5 image/video providers (proving the media seam).
+
+## License
+
+[MIT](LICENSE)
