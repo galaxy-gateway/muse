@@ -1,5 +1,6 @@
 //! Mouse handling: wheel scrolls the list, clicks/drag on the seek bars scrub,
-//! clicks on the tree select + activate a row.
+//! clicks on the tree select + activate a row; the pane dividers drag-resize
+//! (see `panes`).
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -43,6 +44,10 @@ impl App {
                     self.copy_now_playing_path();
                     return;
                 }
+                // Pane dividers: start a resize drag (double-click resets).
+                if self.divider_press(col, row) {
+                    return;
+                }
                 // Seek bars take priority; start a scrub if pressed on one.
                 for rect in [self.wave_rect, self.transport_rect] {
                     if frac_in_rect(rect, col, row).is_some() {
@@ -60,11 +65,15 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                if self.divider_drag(col, row) {
+                    return;
+                }
                 if let Some(rect) = self.seeking_rect {
                     self.seek_to(frac_col(rect, col));
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                self.divider_release();
                 self.seeking_rect = None;
                 self.seek_start_secs = None;
             }

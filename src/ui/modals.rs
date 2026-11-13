@@ -321,6 +321,7 @@ pub(super) fn draw_help(f: &mut Frame, app: &mut App) {
                 (", / .", "seek -5s / +5s"),
                 ("shift ← / →", "scrub the playhead -1s / +1s"),
                 ("click / drag", "seek on the waveform or transport bar"),
+                ("drag divider", "resize panes (double-click resets)"),
                 ("- / +", "volume down / up"),
                 ("media keys", "play / pause / next / prev (OS)"),
             ],

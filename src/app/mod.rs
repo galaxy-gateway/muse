@@ -7,6 +7,7 @@ mod input;
 mod mediakeys;
 mod mouse;
 mod nav;
+pub mod panes;
 mod playback;
 mod queue;
 mod shuffle;
@@ -257,6 +258,18 @@ pub struct App {
     /// Selection detail panel rect (left column, top), for its copy button.
     pub sel_rect: Rect,
     pub screen: Rect,
+    /// Left column (selection + tree) and inspector column rects, recorded each
+    /// render for the pane-divider hit tests.
+    pub left_rect: Rect,
+    pub inspector_rect: Rect,
+    /// Requested left-column share of the width (drag the tree|inspector divider).
+    pub tree_frac: f32,
+    /// Requested oscilloscope height in rows (drag the wave/scope divider).
+    pub scope_rows: u16,
+    /// Divider currently being dragged, if any.
+    pub(super) dragging_divider: Option<panes::Divider>,
+    /// Last divider press (for double-click reset).
+    pub(super) divider_click: Option<(panes::Divider, Instant)>,
     /// While a left-drag started on a seek bar, the rect being scrubbed.
     pub(super) seeking_rect: Option<Rect>,
     /// Playhead position when the current scrub began, for the drag tooltip's delta.
@@ -446,6 +459,19 @@ impl App {
             np_rect: Rect::default(),
             sel_rect: Rect::default(),
             screen: Rect::default(),
+            left_rect: Rect::default(),
+            inspector_rect: Rect::default(),
+            tree_frac: settings
+                .tree_split
+                .filter(|f| f.is_finite())
+                .unwrap_or(panes::TREE_FRAC_DEFAULT)
+                .clamp(panes::TREE_FRAC_MIN, panes::TREE_FRAC_MAX),
+            scope_rows: settings
+                .scope_rows
+                .unwrap_or(panes::SCOPE_ROWS_DEFAULT)
+                .clamp(panes::SCOPE_ROWS_MIN, panes::SCOPE_ROWS_MAX),
+            dragging_divider: None,
+            divider_click: None,
             seeking_rect: None,
             seek_start_secs: None,
             tree_hscroll: 0,
@@ -624,6 +650,8 @@ impl App {
             no_motion: Some(self.no_motion),
             gapless: Some(self.gapless),
             shuffle: Some(self.shuffle),
+            tree_split: Some(self.tree_frac),
+            scope_rows: Some(self.scope_rows),
             session_track: self.now_playing.as_ref().map(p2s),
             // A deferred burst Open means the engine playhead still belongs to
             // the OLD track; the pending pick hasn't started, so it restores

@@ -58,6 +58,7 @@ preview + compare can be added later without touching the core.
 | `,` / `.` | seek −5s / +5s |
 | `shift`+`←`/`→` | scrub playhead ∓1s |
 | click waveform/transport | seek to position |
+| drag pane divider | resize tree/inspector or wave/scope (double-click resets; saved to `config.toml`) |
 | `-` / `+` | volume |
 | `v` / `V` | cycle visualizer preset (forward / back) |
 | `t` / `T` | cycle color theme (forward / back) |
