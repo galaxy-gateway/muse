@@ -15,7 +15,7 @@ use inspector::draw_inspector;
 use modals::{draw_help, draw_queue_modal, draw_theme_modal};
 use transport::draw_transport;
 use tree::{draw_selection, draw_tree};
-use widgets::draw_hover_seek;
+use widgets::{draw_divider_highlight, draw_hover_seek};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let root = Layout::default()
@@ -25,7 +25,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .constraints([
+            Constraint::Length(crate::app::panes::tree_cols(root[0].width, app.tree_frac)),
+            Constraint::Min(0),
+        ])
         .split(root[0]);
 
     // Left column: "selection" panel above the file explorer.
@@ -35,7 +38,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(cols[0]);
 
     // Record hit/draw rects (must mirror draw_inspector's split).
-    let inspector = inspector::inspector_rows(cols[1]);
+    let inspector = inspector::inspector_rows(cols[1], app.scope_rows);
+    app.left_rect = cols[0];
+    app.inspector_rect = cols[1];
     app.np_rect = inspector[0];
     app.wave_rect = inspector[1];
     app.scope_rect = inspector[2];
@@ -50,6 +55,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_tree(f, app, left[1]);
     draw_inspector(f, app, cols[1]);
     draw_transport(f, app, root[1]);
+    draw_divider_highlight(f, app);
 
     // The active theme's effect paints any overlay (particles, sprites,
     // glitch) on EVERY drawn frame. Never decimate the overlay itself:

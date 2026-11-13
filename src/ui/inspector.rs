@@ -18,7 +18,7 @@ use crate::config::{ScopeMode, ScopeStyle, Theme};
 use crate::util::fmt_time;
 
 pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
-    let rows = inspector_rows(area);
+    let rows = inspector_rows(area, app.scope_rows);
     draw_now_playing(f, app, rows[0]);
     // The middle panel is a cycleable view (W), like the scope presets.
     match crate::config::WAVE_VIEWS[app.wave_view_idx].0 {
@@ -37,15 +37,17 @@ pub(super) fn draw_inspector(f: &mut Frame, app: &App, area: Rect) {
     draw_scope(f, app, rows[2]);
 }
 
-/// Inspector row rects: now-playing (5), waveform (remainder), scope (9). Shared
-/// by the renderer and `ui::draw` (which records the rects) so they stay in sync.
-pub(super) fn inspector_rows(area: Rect) -> std::rc::Rc<[Rect]> {
+/// Inspector row rects: now-playing (5), waveform (remainder), scope (the
+/// requested `scope_rows`, clamped to fit). Shared by the renderer and
+/// `ui::draw` (which records the rects) so they stay in sync.
+pub(super) fn inspector_rows(area: Rect, scope_rows: u16) -> std::rc::Rc<[Rect]> {
+    use crate::app::panes;
     Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
-            Constraint::Min(5),
-            Constraint::Length(9),
+            Constraint::Length(panes::NP_ROWS),
+            Constraint::Min(panes::MIN_WAVE_ROWS),
+            Constraint::Length(panes::scope_rows(area.height, scope_rows)),
         ])
         .split(area)
 }

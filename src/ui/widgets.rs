@@ -48,6 +48,47 @@ pub(super) fn border(theme: &Theme, frame: u64, base: Color, offset: f64, beat: 
     theme.effect.border(base, frame, offset, beat)
 }
 
+/// Hover/drag affordance on the pane dividers: recolor the two touching border
+/// lines (keeping their glyphs) in the playhead color and bold them.
+pub(super) fn draw_divider_highlight(f: &mut Frame, app: &App) {
+    use crate::app::panes::Divider;
+    let Some(d) = app.divider_highlight() else {
+        return;
+    };
+    let mark = app.theme.playing;
+    let area = f.area();
+    let buf = f.buffer_mut();
+    let mut paint = |x: u16, y: u16| {
+        if x < area.x + area.width && y < area.y + area.height {
+            let cell = &mut buf[(x, y)];
+            cell.set_fg(mark);
+            cell.set_style(cell.style().add_modifier(Modifier::BOLD));
+        }
+    };
+    match d {
+        Divider::Tree => {
+            let (l, i) = (app.left_rect, app.inspector_rect);
+            if l.width == 0 || i.width == 0 {
+                return;
+            }
+            for y in l.y..l.y + l.height {
+                paint(l.x + l.width - 1, y);
+                paint(i.x, y);
+            }
+        }
+        Divider::Scope => {
+            let (w, s) = (app.wave_rect, app.scope_rect);
+            if w.height == 0 || s.height == 0 {
+                return;
+            }
+            for x in s.x..s.x + s.width {
+                paint(x, w.y + w.height - 1);
+                paint(x, s.y);
+            }
+        }
+    }
+}
+
 /// Hover affordance over the seek bars: a vertical guide at the pointer column
 /// showing where a click would seek to.
 pub(super) fn draw_hover_seek(f: &mut Frame, app: &App) {

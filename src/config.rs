@@ -577,6 +577,12 @@ pub struct Settings {
     pub gapless: Option<bool>,
     /// Shuffle mode (no-repeat bag). `None` defaults to off.
     pub shuffle: Option<bool>,
+    /// Left column (selection + tree) share of the screen width, 0..1, set by
+    /// dragging the tree|inspector divider. `None` defaults to 0.42.
+    pub tree_split: Option<f32>,
+    /// Oscilloscope pane height in rows, set by dragging the wave/scope
+    /// divider. `None` defaults to 9.
+    pub scope_rows: Option<u16>,
 
     // --- last session: restored on next launch (playback resumes paused) ---
     /// Absolute path of the track that was playing at exit.
