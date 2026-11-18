@@ -18,7 +18,19 @@ impl App {
     pub(super) fn on_mouse(&mut self, m: MouseEvent) {
         let (col, row) = (m.column, m.row);
         self.hover = Some((col, row));
+        if self.menu.is_some() {
+            self.menu_mouse(m);
+            return;
+        }
+        if self.palette.is_some() {
+            return;
+        }
         match m.kind {
+            MouseEventKind::Down(MouseButton::Right)
+                if !(self.show_help || self.show_theme || self.show_queue) =>
+            {
+                self.open_menu(col, row);
+            }
             MouseEventKind::ScrollDown => {
                 self.move_cursor(3);
                 let ctx = self.frame_ctx();
@@ -251,6 +263,11 @@ fn flashing(stamp: Option<u64>, frame: u64) -> bool {
     stamp
         .map(|f0| frame.wrapping_sub(f0) < COPY_FLASH_FRAMES)
         .unwrap_or(false)
+}
+
+/// Whether (col,row) lands inside `r`.
+pub(super) fn hit_rect(r: Rect, col: u16, row: u16) -> bool {
+    col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
 
 /// Whether (col,row) lands inside an optional button rect.

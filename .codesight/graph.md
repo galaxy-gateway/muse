@@ -2,6 +2,7 @@
 
 ## Most Imported Files (change these carefully)
 
+- `src/app/cmd.rs` — imported by **1** files
 - `src/app/input.rs` — imported by **1** files
 - `src/app/mediakeys.rs` — imported by **1** files
 - `src/app/mouse.rs` — imported by **1** files
@@ -21,10 +22,10 @@
 - `src/effects/electric.rs` — imported by **1** files
 - `src/effects/fireflies.rs` — imported by **1** files
 - `src/effects/fireplace.rs` — imported by **1** files
-- `src/effects/flag.rs` — imported by **1** files
 
 ## Import Map (who imports what)
 
+- `src/app/cmd.rs` ← `src/app/mod.rs`
 - `src/app/input.rs` ← `src/app/mod.rs`
 - `src/app/mediakeys.rs` ← `src/app/mod.rs`
 - `src/app/mouse.rs` ← `src/app/mod.rs`
@@ -34,4 +35,3 @@
 - `src/app/shuffle.rs` ← `src/app/mod.rs`
 - `src/effects/aurora.rs` ← `src/effects/mod.rs`
 - `src/effects/bamboo_moon.rs` ← `src/effects/mod.rs`
-- `src/effects/basic.rs` ← `src/effects/mod.rs`

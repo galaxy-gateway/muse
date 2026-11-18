@@ -16,6 +16,14 @@ const NAV_ACCEL_WINDOW: Duration = Duration::from_millis(200);
 
 impl App {
     pub(super) fn on_key(&mut self, key: KeyEvent) {
+        if self.palette.is_some() {
+            self.palette_key(key);
+            return;
+        }
+        if self.menu.is_some() {
+            self.menu_key(key);
+            return;
+        }
         if self.filtering {
             self.filter_key(key);
             return;
@@ -55,6 +63,9 @@ impl App {
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.should_quit = true;
+            }
+            (KeyCode::Char(':'), _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.open_palette()
             }
             (KeyCode::Char('?'), _) => {
                 self.show_help = true;

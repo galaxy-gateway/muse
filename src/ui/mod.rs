@@ -3,6 +3,7 @@
 
 mod inspector;
 mod modals;
+mod overlay;
 mod transport;
 mod tree;
 mod widgets;
@@ -93,6 +94,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.show_help {
         draw_help(f, app);
     }
+    overlay::draw_palette(f, app);
+    overlay::draw_menu(f, app);
 }
 
 /// Center a `pw`×`ph` (percent) rect within `area` — shared by the modals.

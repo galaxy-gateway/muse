@@ -8,12 +8,12 @@
 
 Changes to these files have the widest blast radius across the codebase:
 
+- `src/app/cmd.rs` — imported by **1** files
 - `src/app/input.rs` — imported by **1** files
 - `src/app/mediakeys.rs` — imported by **1** files
 - `src/app/mouse.rs` — imported by **1** files
 - `src/app/nav.rs` — imported by **1** files
 - `src/app/playback.rs` — imported by **1** files
-- `src/app/queue.rs` — imported by **1** files
 
 ---
-_Back to [index.md](./index.md) · Generated 2026-07-31_
+_Back to [index.md](./index.md) · Generated 2026-11-19_

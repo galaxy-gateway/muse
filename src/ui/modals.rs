@@ -292,6 +292,8 @@ pub(super) fn draw_help(f: &mut Frame, app: &mut App) {
                 ("h / ←", "collapse / go to parent"),
                 ("g / G", "jump to top / bottom"),
                 ("/", "fuzzy find  (⏎ apply · esc reset)"),
+                (": · ctrl+p", "command palette"),
+                ("right-click", "context menu"),
                 ("c", "jump to the now-playing track"),
             ],
         ),

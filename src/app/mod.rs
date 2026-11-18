@@ -3,10 +3,12 @@
 //! behavior is split across sibling modules (input, nav, playback, mouse,
 //! mediakeys) whose methods are `pub(super)` so they compose within `app`.
 
+mod cmd;
 mod input;
 mod mediakeys;
 mod mouse;
 mod nav;
+pub use cmd::CMDS;
 pub mod panes;
 mod playback;
 mod queue;
@@ -281,6 +283,8 @@ pub struct App {
     /// Live particle simulation, driven by the active theme's effect.
     pub sim: ParticleSim,
     pub show_help: bool,
+    pub palette: Option<cmd::Palette>,
+    pub menu: Option<cmd::Menu>,
     /// Theme-picker modal: open flag, highlighted row, and the theme to restore
     /// on cancel.
     pub show_theme: bool,
@@ -478,6 +482,8 @@ impl App {
             hover: None,
             sim: ParticleSim::new(),
             show_help: false,
+            palette: None,
+            menu: None,
             show_theme: false,
             theme_sel: theme_idx,
             theme_prev: theme_idx,
