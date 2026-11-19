@@ -186,7 +186,7 @@ impl WaveShared {
         self.active.store(true, Ordering::Relaxed);
         let n = WAVE_BINS as u64;
         let mut bins = self.bins.lock().unwrap();
-        for (i, s) in chunk.chunks_exact(2).enumerate() {
+        for (i, s) in chunk.as_chunks::<2>().0.iter().enumerate() {
             let abs = abs0 + i as u64;
             let bi = ((abs * n) / total).min(n - 1) as usize;
             let m = 0.5 * (s[0] + s[1]);
@@ -1302,8 +1302,8 @@ fn decode_ffmpeg(path: &Path) -> Result<DecodedAudio> {
         ));
     }
     let mut samples = Vec::with_capacity(out.stdout.len() / 4);
-    for c in out.stdout.chunks_exact(4) {
-        samples.push(f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    for c in out.stdout.as_chunks::<4>().0 {
+        samples.push(f32::from_le_bytes(*c));
     }
     if samples.is_empty() {
         return Err(anyhow!("ffmpeg produced no audio"));
@@ -1348,8 +1348,8 @@ fn decode_ffmpeg_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
         ));
     }
     let mut samples = Vec::with_capacity(out.stdout.len() / 4);
-    for c in out.stdout.chunks_exact(4) {
-        samples.push(f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    for c in out.stdout.as_chunks::<4>().0 {
+        samples.push(f32::from_le_bytes(*c));
     }
     if samples.is_empty() {
         return Err(anyhow!("ffmpeg produced no audio"));
