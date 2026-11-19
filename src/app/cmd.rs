@@ -3,6 +3,8 @@
 //! key, so every command reuses the existing key handler instead of
 //! duplicating it.
 
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
@@ -97,7 +99,9 @@ impl App {
             Act::Key(code) => {
                 // Menu/palette actions apply to the library, not a half-typed filter.
                 self.filtering = false;
+                self.replaying = true;
                 self.on_key(KeyEvent::new(code, KeyModifiers::NONE));
+                self.replaying = false;
             }
         }
     }
@@ -224,6 +228,63 @@ impl App {
     }
 }
 
+/// Key name from a `[keys]` entry: one character, or space/enter/esc/tab/arrows.
+pub fn parse_key(s: &str) -> Option<KeyCode> {
+    let mut it = s.chars();
+    match (it.next(), it.next()) {
+        (Some(c), None) => Some(KeyCode::Char(c)),
+        _ => Some(match s.to_lowercase().as_str() {
+            "space" => KeyCode::Char(' '),
+            "enter" => KeyCode::Enter,
+            "esc" => KeyCode::Esc,
+            "tab" => KeyCode::Tab,
+            "up" => KeyCode::Up,
+            "down" => KeyCode::Down,
+            "left" => KeyCode::Left,
+            "right" => KeyCode::Right,
+            _ => return None,
+        }),
+    }
+}
+
+/// Resolve the `[keys]` table against `CMDS`; unknown keys or titles are skipped.
+pub fn build_keymap(cfg: Option<&HashMap<String, String>>) -> HashMap<KeyCode, Act> {
+    let mut map = HashMap::new();
+    for (key, title) in cfg.into_iter().flatten() {
+        let act = CMDS.iter().find(|c| c.0.eq_ignore_ascii_case(title));
+        if let (Some(k), Some(c)) = (parse_key(key), act) {
+            map.insert(k, c.2);
+        }
+    }
+    map
+}
+
+fn key_label(k: KeyCode) -> String {
+    match k {
+        KeyCode::Char(' ') => "space".into(),
+        KeyCode::Char(c) => c.to_string(),
+        other => format!("{other:?}").to_lowercase(),
+    }
+}
+
+impl App {
+    /// Palette hint for `CMDS[i]`: the user's binding when there is one (the
+    /// first, by label, if several), else the built-in key.
+    pub fn key_hint(&self, i: usize) -> String {
+        let act = CMDS[i].2;
+        let mut mine: Vec<String> = self
+            .keys
+            .iter()
+            .filter(|(_, a)| **a == act)
+            .map(|(k, _)| key_label(*k))
+            .collect();
+        mine.sort();
+        mine.into_iter()
+            .next()
+            .unwrap_or_else(|| CMDS[i].1.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +306,24 @@ mod tests {
                 .any(|c| crate::util::fuzzy_score(q, &c.0.to_lowercase()).is_some())
         };
         assert!(hit("shuf") && hit("rstlay") && !hit("zzzz"));
+    }
+
+    #[test]
+    fn keymap_parses_and_skips_unknowns() {
+        let cfg: HashMap<String, String> = [
+            ("x", "next track"),
+            ("space", "Reset Pane Layout"),
+            ("zz", "Next Track"),
+            ("y", "No Such Command"),
+        ]
+        .into_iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        let m = build_keymap(Some(&cfg));
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[&KeyCode::Char('x')], k('n'));
+        assert_eq!(m[&KeyCode::Char(' ')], Act::ResetLayout);
+        assert_eq!(parse_key("Enter"), Some(KeyCode::Enter));
+        assert_eq!(parse_key("nope"), None);
     }
 }

@@ -2,6 +2,13 @@
 
 Earlier history lives in the git log.
 
+## 0.67.0 - 2026-11-18
+
+### Added
+- Configurable key bindings: a `[keys]` table in config.toml maps keys to
+  palette commands by title. The palette shows your binding as the key hint
+  (#37).
+
 ## 0.66.1 - 2026-11-18
 
 ### Fixed

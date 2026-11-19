@@ -65,7 +65,23 @@ preview + compare can be added later without touching the core.
 | `n` / `p` | next / previous track |
 | `r` | loop mode (off / all / one) |
 | `/` | fuzzy find (⏎ apply · esc reset) |
+| `:` / `ctrl`+`p` | command palette |
+| right-click | context menu |
 | `?` / `q` | help / quit |
+
+### Custom keys
+
+Bind a key to any palette command (matched by title, case-insensitive) in
+`config.toml`. Bindings add to the built-in keys and override them for that
+key. Keys are one character, or `space`, `enter`, `esc`, `tab`, `up`, `down`,
+`left`, `right`. Unknown keys or titles are ignored. The palette shows your
+binding as the hint.
+
+```toml
+[keys]
+x = "Next Track"
+z = "Toggle Shuffle"
+```
 
 ## Build
 

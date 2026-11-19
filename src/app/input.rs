@@ -60,6 +60,14 @@ impl App {
             self.clear_filter();
             return;
         }
+        // User `[keys]` bindings win over the built-ins (but not while an Act replays one).
+        if !self.replaying
+            && (key.modifiers - KeyModifiers::SHIFT).is_empty()
+            && let Some(&act) = self.keys.get(&key.code)
+        {
+            self.run_act(act);
+            return;
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 self.should_quit = true;

@@ -283,6 +283,11 @@ pub struct App {
     /// Live particle simulation, driven by the active theme's effect.
     pub sim: ParticleSim,
     pub show_help: bool,
+    /// User key bindings (parsed) and the raw `[keys]` table, kept so saves round-trip it.
+    pub keys: std::collections::HashMap<crossterm::event::KeyCode, cmd::Act>,
+    keys_cfg: std::collections::HashMap<String, String>,
+    /// True while an Act replays a default key, so user bindings don't re-intercept it.
+    replaying: bool,
     pub palette: Option<cmd::Palette>,
     pub menu: Option<cmd::Menu>,
     /// Theme-picker modal: open flag, highlighted row, and the theme to restore
@@ -482,6 +487,9 @@ impl App {
             hover: None,
             sim: ParticleSim::new(),
             show_help: false,
+            keys: cmd::build_keymap(settings.keys.as_ref()),
+            keys_cfg: settings.keys.clone().unwrap_or_default(),
+            replaying: false,
             palette: None,
             menu: None,
             show_theme: false,
@@ -656,6 +664,7 @@ impl App {
             no_motion: Some(self.no_motion),
             gapless: Some(self.gapless),
             shuffle: Some(self.shuffle),
+            keys: (!self.keys_cfg.is_empty()).then(|| self.keys_cfg.clone()),
             tree_split: Some(self.tree_frac),
             scope_rows: Some(self.scope_rows),
             session_track: self.now_playing.as_ref().map(p2s),

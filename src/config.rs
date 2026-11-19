@@ -596,6 +596,10 @@ pub struct Settings {
     /// Absolute path of the tree-cursor selection at exit.
     pub session_cursor: Option<String>,
 
+    /// Key bindings: key -> palette command title (case-insensitive), e.g.
+    /// `x = "Next Track"`. Additive over the built-in keys.
+    pub keys: Option<HashMap<String, String>>,
+
     /// Per-theme knob overrides, keyed by theme name. Only configurable themes
     /// (glitch family) appear here; absent knobs fall back to the effect default.
     pub theme_tuning: Option<HashMap<String, TuningCfg>>,
@@ -1144,4 +1148,23 @@ pub fn theme_knobs(idx: usize) -> Vec<crate::effects::Knob> {
         }
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_round_trip_keys_table() {
+        let s = Settings {
+            shuffle: Some(true),
+            keys: Some([("x".to_string(), "Next Track".to_string())].into()),
+            theme_tuning: Some([("glitch".to_string(), TuningCfg::default())].into()),
+            ..Default::default()
+        };
+        let txt = toml::to_string(&s).expect("serialize");
+        let back: Settings = toml::from_str(&txt).expect("parse");
+        assert_eq!(back.keys.unwrap()["x"], "Next Track");
+        assert_eq!(back.shuffle, Some(true));
+    }
 }

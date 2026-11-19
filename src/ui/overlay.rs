@@ -40,7 +40,8 @@ pub(super) fn draw_palette(f: &mut Frame, app: &App) {
     let items: Vec<ListItem> = hits
         .iter()
         .map(|&i| {
-            let (title, key, _) = CMDS[i];
+            let title = CMDS[i].0;
+            let key = app.key_hint(i);
             let pad = (inner.width as usize)
                 .saturating_sub(title.chars().count() + key.chars().count() + 2);
             ListItem::new(Line::from(vec![
